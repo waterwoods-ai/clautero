@@ -151,18 +151,51 @@ export function createSidebarDOM(
   htmlWrapper.appendChild(inputArea);
   container.appendChild(htmlWrapper);
 
-  // Inject into the main-window (#main-window is the root XUL element in Zotero).
-  // We append the splitter + sidebar as direct children of #main-window.
-  // Since #main-window is typically a horizontal layout, this places us on the right.
-  // If the layout is vertical, we force horizontal via CSS flex on #main-window.
+  // Debug: dump direct children of #main-window to find the layout container
   const mainWindow = doc.getElementById("main-window") ?? doc.documentElement;
+  const childInfo = Array.from(mainWindow.children)
+    .map((c, i) => `${i}:${c.tagName}#${c.id || ""}`)
+    .join(", ");
+  Zotero.log(`[Clautero] #main-window children: ${childInfo}`, "info");
 
-  mainWindow.appendChild(splitter);
-  mainWindow.appendChild(container);
-  Zotero.log(
-    `[Clautero] Sidebar appended to ${mainWindow.tagName}#${mainWindow.id || "root"}`,
-    "info"
-  );
+  // Find the right horizontal container. Walk through #main-window children
+  // looking for hbox, or a vbox/deck that contains the main content.
+  // Then drill into it to find the horizontal layout with the 3 panes.
+  let target: Element | null = null;
+
+  // Look for hbox direct children of main-window
+  for (const child of Array.from(mainWindow.children)) {
+    if (child.tagName.toLowerCase() === "hbox") {
+      target = child;
+      break;
+    }
+  }
+
+  // If no hbox at top level, look for the deepest vbox/deck that has an hbox child
+  if (!target) {
+    for (const child of Array.from(mainWindow.children)) {
+      const hbox = child.querySelector("hbox");
+      if (hbox) {
+        // Log what we found for debugging
+        const hboxChildren = Array.from(hbox.children)
+          .map((c, i) => `${i}:${c.tagName}#${c.id || ""}`)
+          .join(", ");
+        Zotero.log(`[Clautero] Found hbox in ${child.tagName}#${child.id || ""}, children: ${hboxChildren}`, "info");
+        target = hbox;
+        break;
+      }
+    }
+  }
+
+  if (target) {
+    target.appendChild(splitter);
+    target.appendChild(container);
+    Zotero.log(`[Clautero] Sidebar appended to ${target.tagName}#${target.id || ""}`, "info");
+  } else {
+    mainWindow.appendChild(splitter);
+    mainWindow.appendChild(container);
+    Zotero.log("[Clautero] Sidebar appended to #main-window (no hbox found)", "warning");
+  }
 
   const elements: SidebarElements = Object.freeze({
     splitter,
