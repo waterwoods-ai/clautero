@@ -91,14 +91,15 @@ function buildInputArea(doc: Document): {
   return { wrapper, textarea, sendButton };
 }
 
-function injectStylesheet(doc: Document, rootURI: string): HTMLElement {
-  const link = createHtmlElement(doc, "link", {
-    rel: "stylesheet",
-    href: `${rootURI}content/sidebar.css`,
-    type: "text/css",
-  });
-  doc.head.appendChild(link);
-  return link;
+function injectStylesheet(doc: Document, rootURI: string): Element {
+  // Zotero 7's main window is XUL — no <head> element.
+  // Use a processing instruction or append to documentElement instead.
+  const pi = doc.createProcessingInstruction(
+    "xml-stylesheet",
+    `href="${rootURI}content/sidebar.css" type="text/css"`
+  );
+  doc.insertBefore(pi, doc.documentElement);
+  return pi as unknown as Element;
 }
 
 /**
@@ -198,7 +199,10 @@ export function createSidebarDOM(
     try {
       splitter.remove();
       container.remove();
-      styleLink.remove();
+      // Processing instruction cleanup
+      if (styleLink.parentNode) {
+        styleLink.parentNode.removeChild(styleLink);
+      }
     } catch (error) {
       Zotero.log(`[Clautero] Error cleaning up sidebar DOM: ${error}`, "warning");
     }
