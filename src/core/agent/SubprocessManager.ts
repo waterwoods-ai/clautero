@@ -155,15 +155,11 @@ export function createSubprocessManager(options: SubprocessManagerOptions) {
 
     await cleanupOrphanedProcess(options.dataDir);
 
-    // Gecko's Subprocess.call requires an absolute path to an executable.
-    // /bin/sh has a minimal PATH that doesn't include ~/.local/bin etc.
-    // Use /bin/zsh -l -c (login shell) so it loads the user's full PATH.
-    const shellCmd = [options.command, ...options.args].join(" ");
-    Zotero.log(`[Clautero] Spawning: /bin/zsh -l -c "${shellCmd}"`, "info");
+    Zotero.log(`[Clautero] Spawning: ${options.command} ${[...options.args].join(" ")}`, "info");
 
     const proc = await Subprocess.call({
-      command: "/bin/zsh",
-      arguments: ["-l", "-c", shellCmd],
+      command: options.command,
+      arguments: [...options.args],
       workdir: options.workdir,
       stderr: "pipe",
     });

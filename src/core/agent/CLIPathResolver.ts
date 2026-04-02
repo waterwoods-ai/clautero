@@ -15,7 +15,9 @@ export async function resolveCLIPath(): Promise<string> {
   } catch {
     // ignore
   }
-  return "claude";
+  // Gecko subprocess doesn't inherit user shell PATH, even with login shell.
+  // Use the known absolute path directly.
+  return "/Users/tom/.local/bin/claude";
 }
 
 export function clearCLIPathCache(): void {
