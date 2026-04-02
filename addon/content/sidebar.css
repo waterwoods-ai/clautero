@@ -21,14 +21,22 @@
 #clautero-sidebar {
   min-width: 280px;
   max-width: 800px;
+  overflow: hidden;
+  border-inline-start: 1px solid var(--material-border, #ccc);
+}
+
+/* XHTML wrapper inside XUL vbox — carries all visual styles.
+   Mixing XHTML children directly in a XUL parent causes gray rendering. */
+.clautero-sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
   background-color: var(--material-background, #fff);
   color: var(--fill-primary, #1a1a1a);
   font-family: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
   font-size: var(--font-size, 13px);
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
-  border-inline-start: 1px solid var(--material-border, #ccc);
 }
 
 /* ── Header ── */

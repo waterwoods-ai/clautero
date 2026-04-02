@@ -125,11 +125,17 @@ export function createSidebarDOM(
   const grippy = createXulElement(doc, "grippy");
   splitter.appendChild(grippy);
 
-  // Create XUL vbox container
+  // Create XUL vbox as the outer container (for XUL splitter compat)
   const container = createXulElement(doc, "vbox", {
     id: "clautero-sidebar",
     width: String(options.width),
     persist: "width",
+  });
+
+  // Wrap all XHTML content in an XHTML div — mixing XUL parent with XHTML
+  // children directly causes gray/unstyled rendering in Gecko
+  const htmlWrapper = createHtmlElement(doc, "div", {
+    class: "clautero-sidebar-inner",
   });
 
   // Build internal XHTML structure
@@ -138,10 +144,11 @@ export function createSidebarDOM(
   const contextBar = buildContextBar(doc);
   const { wrapper: inputArea, textarea, sendButton } = buildInputArea(doc);
 
-  container.appendChild(header);
-  container.appendChild(messageArea);
-  container.appendChild(contextBar);
-  container.appendChild(inputArea);
+  htmlWrapper.appendChild(header);
+  htmlWrapper.appendChild(messageArea);
+  htmlWrapper.appendChild(contextBar);
+  htmlWrapper.appendChild(inputArea);
+  container.appendChild(htmlWrapper);
 
   // Find injection point: the main horizontal layout
   const mainHbox = doc.getElementById("browser-border-start")?.parentElement
