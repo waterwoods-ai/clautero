@@ -150,13 +150,22 @@ export function createSidebarDOM(
   htmlWrapper.appendChild(inputArea);
   container.appendChild(htmlWrapper);
 
+  // Debug: log available top-level elements to find the right injection point
+  const debugIds = Array.from(doc.querySelectorAll("[id]"))
+    .slice(0, 30)
+    .map(el => `${el.tagName}#${el.id}`)
+    .join(", ");
+  Zotero.log(`[Clautero] DOM debug - top elements: ${debugIds}`, "info");
+
   // Find injection point: Zotero 7's main horizontal layout
   // Try multiple selectors for robustness across Zotero versions
   const mainLayout = doc.getElementById("zotero-main-layout")
     ?? doc.getElementById("main-window")?.querySelector("hbox")
+    ?? doc.querySelector("#zotero-pane hbox")
     ?? doc.querySelector("#browser-border-start")?.parentElement
     ?? doc.querySelector("hbox[flex]")
-    ?? doc.querySelector("#main-window hbox");
+    ?? doc.querySelector("#main-window hbox")
+    ?? doc.querySelector("hbox");
 
   if (!mainLayout) {
     // Fallback: append to the document's main element
@@ -171,7 +180,7 @@ export function createSidebarDOM(
     mainLayout.appendChild(splitter);
     mainLayout.appendChild(container);
     Zotero.log(
-      `[Clautero] Sidebar injected into: ${mainLayout.id || mainLayout.tagName}`,
+      `[Clautero] Sidebar injected into: ${mainLayout.id || mainLayout.tagName} (tag: ${mainLayout.tagName})`,
       "info"
     );
   }

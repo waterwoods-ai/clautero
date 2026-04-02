@@ -47,13 +47,21 @@ function addToolsMenuItem(doc: Document, onToggle: () => void): Element {
   menuItem.setAttribute("accesskey", "L");
   menuItem.addEventListener("command", onToggle);
 
-  // Insert into Tools menu
-  const toolsMenu = doc.getElementById("menu_ToolsPopup");
-  if (toolsMenu) {
-    toolsMenu.appendChild(menuItem);
-    Zotero.log("[Clautero] Tools menu item added", "info");
+  // Try multiple known menu popup IDs across Zotero versions
+  const menuPopup = doc.getElementById("menu_ToolsPopup")
+    ?? doc.getElementById("menu_toolsPopup")
+    ?? doc.querySelector("#menu_Tools menupopup")
+    ?? doc.querySelector("#menu_tools menupopup")
+    ?? doc.querySelector("menupopup[id*='ools']");
+
+  if (menuPopup) {
+    menuPopup.appendChild(menuItem);
+    Zotero.log(`[Clautero] Tools menu item added to: ${menuPopup.id || "menupopup"}`, "info");
   } else {
-    Zotero.log("[Clautero] Could not find Tools menu", "warning");
+    // Fallback: log all menu IDs for debugging
+    const allMenus = doc.querySelectorAll("menupopup");
+    const ids = Array.from(allMenus).map(m => m.id || "(no id)").join(", ");
+    Zotero.log(`[Clautero] Could not find Tools menu. Available menupopups: ${ids}`, "warning");
   }
 
   return menuItem;
@@ -195,6 +203,14 @@ export function initSidebarManager(
     isVisible,
     getElements: () => sidebarElements,
   });
+
+  // Auto-show sidebar on initialization so user can see it immediately
+  try {
+    show();
+    Zotero.log("[Clautero] Sidebar auto-shown", "info");
+  } catch (error) {
+    Zotero.log(`[Clautero] Failed to auto-show sidebar: ${error}`, "error");
+  }
 
   // Return cleanup function
   return () => {
