@@ -105,22 +105,21 @@ export function initSidebarManager(
         l10nID: "clautero-sidebar-title",
         icon: chatIcon,
       },
-      onRender: ({ body, item }: { body: HTMLElement; item: any }) => {
+      // Build UI on init (fires once when section is created)
+      onInit: ({ body, refresh }: { body: HTMLElement; refresh: () => void }) => {
+        Zotero.log("[Clautero] onInit called", "info");
         const doc = body.ownerDocument;
         sectionBody = body;
 
-        // Make the section body fill the entire available height
         body.style.display = "flex";
         body.style.flexDirection = "column";
         body.style.height = "100%";
         body.style.overflow = "hidden";
         body.style.padding = "0";
 
-        // Always rebuild UI — onRender gives a new body each time
         registeredElements = buildChatUI(body, doc);
-        Zotero.log("[Clautero] Chat UI rendered in item pane section", "info");
+        Zotero.log("[Clautero] Chat UI built in onInit", "info");
 
-        // Expose for hooks.ts to wire up
         (_window as any).__clauteroSidebar = Object.freeze({
           toggle: () => {},
           show: () => {},
@@ -129,9 +128,30 @@ export function initSidebarManager(
           getElements: () => registeredElements,
         });
       },
-
+      // onRender fires each time item changes — we keep the chat UI, just log
+      onRender: ({ body, item }: { body: HTMLElement; item: any }) => {
+        Zotero.log("[Clautero] onRender called", "info");
+        // If body is empty (UI was destroyed), rebuild
+        if (body.children.length === 0) {
+          const doc = body.ownerDocument;
+          sectionBody = body;
+          body.style.display = "flex";
+          body.style.flexDirection = "column";
+          body.style.height = "100%";
+          body.style.overflow = "hidden";
+          body.style.padding = "0";
+          registeredElements = buildChatUI(body, doc);
+          (_window as any).__clauteroSidebar = Object.freeze({
+            toggle: () => {},
+            show: () => {},
+            hide: () => {},
+            isVisible: () => true,
+            getElements: () => registeredElements,
+          });
+          Zotero.log("[Clautero] Chat UI rebuilt in onRender", "info");
+        }
+      },
       onItemChange: ({ item, setEnabled }: { item: any; setEnabled: (v: boolean) => void }) => {
-        // Always show the section regardless of selected item
         setEnabled(true);
         return true;
       },
