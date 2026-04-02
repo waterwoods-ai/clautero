@@ -102,7 +102,7 @@ export function initSidebarManager(
   try {
     // Load FTL before registration
     try {
-      _window.MozXULElement.insertFTLIfNeeded("addon.ftl");
+      (_window as any).MozXULElement.insertFTLIfNeeded("addon.ftl");
     } catch {
       // ignore
     }
