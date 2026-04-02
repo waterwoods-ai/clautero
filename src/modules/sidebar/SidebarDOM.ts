@@ -151,54 +151,70 @@ export function createSidebarDOM(
   htmlWrapper.appendChild(inputArea);
   container.appendChild(htmlWrapper);
 
-  // Strategy: find the item pane (right panel showing item details) and inject
-  // our sidebar AFTER it in its parent hbox. This places us on the far right.
-  //
-  // Zotero layout: hbox > [library-tree | splitter | items-list | splitter | item-pane]
-  // We want:       hbox > [library-tree | splitter | items-list | splitter | item-pane | OUR-splitter | OUR-sidebar]
+  // Debug: dump layout-relevant elements
+  const layoutEls = Array.from(doc.querySelectorAll("[id]"))
+    .filter(el => {
+      const tag = el.tagName.toLowerCase();
+      const id = el.id.toLowerCase();
+      return tag === "hbox" || tag === "vbox" || tag === "deck"
+        || id.includes("pane") || id.includes("layout")
+        || id.includes("content") || id.includes("zotero-tb");
+    })
+    .slice(0, 40)
+    .map(el => `${el.tagName}#${el.id}`)
+    .join(", ");
+  Zotero.log(`[Clautero] DOM layout elements: ${layoutEls}`, "info");
 
-  const itemPane = doc.getElementById("zotero-item-pane")
-    ?? doc.getElementById("item-pane")
-    ?? doc.getElementById("zotero-items-pane");
-
+  // Find the main content hbox that contains the library/items/detail panes.
+  // Search for an hbox that contains splitters (the column dividers).
   let injected = false;
 
-  if (itemPane && itemPane.parentElement) {
-    const parent = itemPane.parentElement;
-    // Insert after the item pane
-    if (itemPane.nextSibling) {
-      parent.insertBefore(splitter, itemPane.nextSibling);
-      parent.insertBefore(container, splitter.nextSibling);
-    } else {
-      parent.appendChild(splitter);
-      parent.appendChild(container);
+  // Strategy 1: find by known pane IDs
+  const paneIds = [
+    "zotero-item-pane", "item-pane", "zotero-items-pane",
+    "zotero-context-pane", "zotero-view-item",
+  ];
+  for (const id of paneIds) {
+    const pane = doc.getElementById(id);
+    if (pane && pane.parentElement) {
+      pane.parentElement.appendChild(splitter);
+      pane.parentElement.appendChild(container);
+      injected = true;
+      Zotero.log(`[Clautero] Sidebar injected after #${id} in ${pane.parentElement.tagName}#${pane.parentElement.id || ""}`, "info");
+      break;
     }
-    injected = true;
-    Zotero.log(
-      `[Clautero] Sidebar injected after: ${itemPane.id} in ${parent.tagName}#${parent.id || ""}`,
-      "info"
-    );
   }
 
+  // Strategy 2: find hbox containing splitters (the main 3-column layout)
   if (!injected) {
-    // Fallback: find any hbox that contains multiple children (likely the main layout)
     const hboxes = doc.querySelectorAll("hbox");
     for (const hbox of Array.from(hboxes)) {
-      if (hbox.children.length >= 3) {
+      const splitters = hbox.querySelectorAll(":scope > splitter");
+      if (splitters.length >= 1 && hbox.children.length >= 3) {
         hbox.appendChild(splitter);
         hbox.appendChild(container);
         injected = true;
-        Zotero.log(
-          `[Clautero] Sidebar injected into hbox#${hbox.id || ""} with ${hbox.children.length} children`,
-          "info"
-        );
+        Zotero.log(`[Clautero] Sidebar injected into hbox#${hbox.id || ""} (${splitters.length} splitters, ${hbox.children.length} children)`, "info");
         break;
       }
     }
   }
 
+  // Strategy 3: append to the main-window's first hbox child
   if (!injected) {
-    // Last resort: append to document root
+    const mainWin = doc.getElementById("main-window");
+    if (mainWin) {
+      const firstHbox = mainWin.querySelector("hbox");
+      if (firstHbox) {
+        firstHbox.appendChild(splitter);
+        firstHbox.appendChild(container);
+        injected = true;
+        Zotero.log(`[Clautero] Sidebar injected into main-window > hbox`, "info");
+      }
+    }
+  }
+
+  if (!injected) {
     doc.documentElement.appendChild(splitter);
     doc.documentElement.appendChild(container);
     Zotero.log("[Clautero] Sidebar injected into document root (fallback)", "warning");

@@ -1,6 +1,11 @@
 import { createNDJSONParser } from "./NDJSONParser";
 import type { StreamChunk } from "./types";
 
+// Import Gecko's subprocess module at runtime
+const { Subprocess } = ChromeUtils.importESModule(
+  "resource://gre/modules/Subprocess.sys.mjs"
+);
+
 const PID_FILENAME = "clautero-claude.pid";
 
 export interface SubprocessManagerOptions {
@@ -178,12 +183,12 @@ export function createSubprocessManager(options: SubprocessManagerOptions) {
     // Wait for process exit in the background
     proc
       .wait()
-      .then(async (result) => {
+      .then(async (result: { exitCode: number }) => {
         running = false;
         await removePidFile(options.dataDir);
         options.onExit(result.exitCode);
       })
-      .catch(async (error) => {
+      .catch(async (error: unknown) => {
         running = false;
         await removePidFile(options.dataDir);
         options.onError(

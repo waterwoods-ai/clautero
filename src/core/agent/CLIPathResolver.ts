@@ -1,3 +1,8 @@
+// Import Gecko's subprocess module for pathSearch
+const { Subprocess } = ChromeUtils.importESModule(
+  "resource://gre/modules/Subprocess.sys.mjs"
+);
+
 const KNOWN_PATHS = [
   "/usr/local/bin/claude",
   "/opt/homebrew/bin/claude",
