@@ -1,0 +1,179 @@
+/**
+ * ContextChipsView — Renders context chips above the input area.
+ *
+ * Shows attached Zotero item info as removable chips in the contextBar element.
+ * Uses createElementNS exclusively (never innerHTML).
+ */
+
+import { buildContext } from "./ContextBuilder";
+
+const XHTML_NS = "http://www.w3.org/1999/xhtml";
+
+interface ChipsViewState {
+  readonly item: Zotero.Item | null;
+  readonly context: string;
+}
+
+function createHtmlEl<K extends keyof HTMLElementTagNameMap>(
+  doc: Document,
+  tag: K,
+  attrs: Readonly<Record<string, string>> = {}
+): HTMLElementTagNameMap[K] {
+  const el = doc.createElementNS(XHTML_NS, tag) as HTMLElementTagNameMap[K];
+  for (const [key, value] of Object.entries(attrs)) {
+    el.setAttribute(key, value);
+  }
+  return el;
+}
+
+function getPdfFilename(item: Zotero.Item): string {
+  try {
+    const attachmentIds = item.getAttachments();
+    for (const id of attachmentIds) {
+      const attachment = Zotero.Items.get(id);
+      if (attachment?.attachmentContentType === "application/pdf") {
+        const path = attachment.getFilePath?.();
+        if (typeof path === "string" && path.length > 0) {
+          return path.split("/").pop() || path.split("\\").pop() || "file.pdf";
+        }
+        return attachment.getField?.("title") as string || "file.pdf";
+      }
+    }
+  } catch {
+    // No PDF found
+  }
+  return "";
+}
+
+function countAnnotations(item: Zotero.Item): number {
+  try {
+    const attachmentIds = item.getAttachments();
+    let count = 0;
+    for (const id of attachmentIds) {
+      const attachment = Zotero.Items.get(id);
+      if (attachment?.attachmentContentType === "application/pdf") {
+        const annotations = attachment.getAnnotations?.();
+        if (annotations) {
+          count += annotations.length;
+        }
+      }
+    }
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
+function buildChipElement(
+  doc: Document,
+  label: string,
+  onRemove: () => void
+): HTMLElement {
+  const chip = createHtmlEl(doc, "span", {
+    class: "clautero-context-chip",
+  });
+  const labelSpan = createHtmlEl(doc, "span", {
+    class: "clautero-context-chip-label",
+  });
+  labelSpan.textContent = label;
+  chip.appendChild(labelSpan);
+
+  const removeBtn = createHtmlEl(doc, "button", {
+    class: "clautero-context-chip-remove",
+    "aria-label": `Remove ${label}`,
+  });
+  removeBtn.textContent = "\u00D7";
+  removeBtn.addEventListener("click", onRemove);
+  chip.appendChild(removeBtn);
+
+  return chip;
+}
+
+function clearContainer(container: HTMLElement): void {
+  while (container.firstChild) {
+    container.removeChild(container.firstChild);
+  }
+}
+
+export function createContextChipsView(
+  contextBar: HTMLElement,
+  document: Document
+) {
+  let state: ChipsViewState = Object.freeze({ item: null, context: "" });
+  let onChangeCallback: ((context: string) => void) | null = null;
+
+  function setOnChange(cb: (context: string) => void): void {
+    onChangeCallback = cb;
+  }
+
+  function renderChips(): void {
+    clearContainer(contextBar);
+    const { item } = state;
+    if (!item) {
+      contextBar.setAttribute("hidden", "true");
+      return;
+    }
+
+    contextBar.removeAttribute("hidden");
+
+    const pdfName = getPdfFilename(item);
+    if (pdfName) {
+      const chip = buildChipElement(document, `PDF: ${pdfName}`, handleRemove);
+      contextBar.appendChild(chip);
+    }
+
+    const annotationCount = countAnnotations(item);
+    if (annotationCount > 0) {
+      const label = `${annotationCount} annotation${annotationCount === 1 ? "" : "s"}`;
+      const chip = buildChipElement(document, label, handleRemove);
+      contextBar.appendChild(chip);
+    }
+
+    if (!pdfName && annotationCount === 0) {
+      const title = (item.getField?.("title") as string) || "Item";
+      const chip = buildChipElement(document, title, handleRemove);
+      contextBar.appendChild(chip);
+    }
+  }
+
+  function handleRemove(): void {
+    state = Object.freeze({ item: null, context: "" });
+    renderChips();
+    onChangeCallback?.("");
+  }
+
+  async function update(item: Zotero.Item | null): Promise<void> {
+    if (!item) {
+      state = Object.freeze({ item: null, context: "" });
+      renderChips();
+      onChangeCallback?.("");
+      return;
+    }
+
+    try {
+      const context = await buildContext(item);
+      state = Object.freeze({ item, context });
+      renderChips();
+      onChangeCallback?.(context);
+    } catch (error) {
+      Zotero.log(`[Clautero] Failed to update context chips: ${error}`, "warning");
+      state = Object.freeze({ item: null, context: "" });
+      renderChips();
+    }
+  }
+
+  function getContext(): string {
+    return state.context;
+  }
+
+  function cleanup(): void {
+    clearContainer(contextBar);
+    state = Object.freeze({ item: null, context: "" });
+    onChangeCallback = null;
+  }
+
+  // Initial state
+  contextBar.setAttribute("hidden", "true");
+
+  return Object.freeze({ update, getContext, cleanup, setOnChange });
+}

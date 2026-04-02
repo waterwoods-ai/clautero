@@ -7,6 +7,7 @@ import { createStreamController } from "./modules/chat/StreamController";
 import { createMessageRenderer } from "./modules/chat/MessageRenderer";
 import { createClauteroService } from "./core/agent/ClauteroService";
 import type { StreamChunk } from "./core/agent/types";
+import { createContextChipsView } from "./modules/context/ContextChipsView";
 
 export interface Hooks {
   onStartup(): Promise<void>;
@@ -18,6 +19,96 @@ export interface Hooks {
 function resolveCliPath(): string {
   const pref = Zotero.Prefs.get("extensions.clautero.cliPath", true) as string;
   return pref || "claude";
+}
+
+function isAutoAttachEnabled(): boolean {
+  try {
+    const pref = Zotero.Prefs.get(
+      "extensions.clautero.autoAttachContext",
+      true
+    );
+    return pref !== false;
+  } catch {
+    return true;
+  }
+}
+
+function getSelectedItem(): Zotero.Item | null {
+  try {
+    const pane = Zotero.getActiveZoteroPane();
+    if (!pane) {
+      return null;
+    }
+    const items = pane.getSelectedItems();
+    if (!items || items.length === 0) {
+      return null;
+    }
+    // Use first selected regular item (not attachments/notes)
+    const regularItem = items.find(
+      (item: Zotero.Item) =>
+        item.itemType !== "attachment" && item.itemType !== "note"
+    );
+    return regularItem || null;
+  } catch {
+    return null;
+  }
+}
+
+function initContextIntegration(
+  win: Window,
+  contextBar: HTMLElement,
+  onContextChange: (context: string) => void,
+  cleanupList: Array<() => void>
+): void {
+  const chipsView = createContextChipsView(contextBar, win.document);
+  chipsView.setOnChange(onContextChange);
+  cleanupList.push(() => chipsView.cleanup());
+
+  if (!isAutoAttachEnabled()) {
+    Zotero.log("[Clautero] Auto-attach context disabled", "info");
+    return;
+  }
+
+  // Attach context for initially selected item
+  const initialItem = getSelectedItem();
+  if (initialItem) {
+    chipsView.update(initialItem);
+  }
+
+  // Register notifier for selection changes
+  const notifierID = Zotero.Notifier.registerObserver(
+    {
+      notify: (
+        event: string,
+        type: string,
+        _ids: number[],
+        _extraData: Record<string, unknown>
+      ) => {
+        if (type === "item" && (event === "select" || event === "modify")) {
+          if (!isAutoAttachEnabled()) {
+            return;
+          }
+          const selected = getSelectedItem();
+          chipsView.update(selected);
+        }
+      },
+    },
+    ["item"],
+    "clautero"
+  );
+
+  cleanupList.push(() => {
+    try {
+      Zotero.Notifier.unregisterObserver(notifierID);
+    } catch (error) {
+      Zotero.log(
+        `[Clautero] Failed to unregister notifier: ${error}`,
+        "warning"
+      );
+    }
+  });
+
+  Zotero.log("[Clautero] Context integration initialized", "info");
 }
 
 function initChatSystem(
@@ -37,7 +128,7 @@ function initChatSystem(
     return;
   }
 
-  const { messageArea, textarea, sendButton } = elements;
+  const { messageArea, textarea, sendButton, contextBar } = elements;
 
   // Mutable holder for immutable state
   let chatState = createChatState();
@@ -51,6 +142,18 @@ function initChatSystem(
 
   const inputController = createInputController(textarea, sendButton);
   cleanupList.push(() => inputController.cleanup());
+
+  // Initialize context integration
+  let currentContext = "";
+  initContextIntegration(
+    win,
+    contextBar,
+    (context: string) => {
+      currentContext = context;
+      inputController.hooks.onContextChange(context);
+    },
+    cleanupList
+  );
 
   const streamController = createStreamController(renderer, getState, setChatState);
   cleanupList.push(() => streamController.cleanup());
@@ -89,7 +192,11 @@ function initChatSystem(
 
       inputController.setDisabled(true);
       streamController.startStream();
-      service.sendMessage(text);
+
+      const messageWithContext = currentContext
+        ? `${currentContext}\n\n${text}`
+        : text;
+      service.sendMessage(messageWithContext);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       Zotero.log(`[Clautero] Send error: ${msg}`, "error");
