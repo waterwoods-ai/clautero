@@ -11,7 +11,10 @@ export interface MessageChannelOptions {
 }
 
 function formatStreamMessage(text: string): string {
-  const message = { type: "user_message", content: text };
+  const message = {
+    type: "user",
+    message: { role: "user", content: text },
+  };
   return JSON.stringify(message) + "\n";
 }
 

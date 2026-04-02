@@ -15,6 +15,7 @@ const BASE_CLI_ARGS = [
   "stream-json",
   "--output-format",
   "stream-json",
+  "--verbose",
 ] as const;
 
 function buildCliArgs(sessionId?: string): readonly string[] {
@@ -25,7 +26,8 @@ function buildCliArgs(sessionId?: string): readonly string[] {
 }
 
 function extractSessionInfo(chunk: StreamChunk): SessionInfo | null {
-  if (chunk.type !== "system_init") {
+  // Session ID comes from "system" messages and "result" messages
+  if (chunk.type !== "system" && chunk.type !== "result") {
     return null;
   }
 
@@ -48,7 +50,7 @@ function extractSessionInfo(chunk: StreamChunk): SessionInfo | null {
 }
 
 function isToolRequest(chunk: StreamChunk): ToolRequest | null {
-  if (chunk.type !== "control_request") {
+  if (chunk.type !== "tool_use") {
     return null;
   }
 

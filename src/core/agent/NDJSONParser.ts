@@ -1,42 +1,131 @@
-import type { StreamChunk, StreamChunkType } from "./types";
+/**
+ * NDJSONParser — Parses newline-delimited JSON from Claude CLI stdout.
+ *
+ * Actual Claude CLI stream-json message format:
+ *   {"type":"system","subtype":"...","session_id":"..."}
+ *   {"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}
+ *   {"type":"result","subtype":"success","result":"full text","session_id":"..."}
+ *   {"type":"rate_limit_event","rate_limit_info":{...}}
+ */
 
-const VALID_CHUNK_TYPES: ReadonlySet<string> = new Set([
-  "system_init",
-  "text",
-  "thinking",
-  "tool_use",
-  "tool_result",
-  "error",
-  "control_request",
-  "result",
-]);
-
-function isValidChunkType(type: unknown): type is StreamChunkType {
-  return typeof type === "string" && VALID_CHUNK_TYPES.has(type);
-}
-
-function parseRawMessage(raw: Record<string, unknown>): StreamChunk | null {
-  const { type, content, metadata, ...rest } = raw;
-
-  if (!isValidChunkType(type)) {
-    return null;
-  }
-
-  const chunk: StreamChunk = {
-    type,
-    content: typeof content === "string" ? content : JSON.stringify(content ?? ""),
-    ...(metadata !== undefined
-      ? { metadata: metadata as Readonly<Record<string, unknown>> }
-      : {}),
-    ...(Object.keys(rest).length > 0 ? { metadata: { ...metadata as object, ...rest } } : {}),
-  };
-
-  return chunk;
-}
+import type { StreamChunk } from "./types";
 
 export interface NDJSONParserOptions {
   readonly onMessage: (chunk: StreamChunk) => void;
   readonly onParseError?: (line: string, error: Error) => void;
+}
+
+interface ContentBlock {
+  type: string;
+  text?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+  id?: string;
+}
+
+function extractTextFromAssistant(raw: Record<string, unknown>): StreamChunk[] {
+  const message = raw.message as Record<string, unknown> | undefined;
+  if (!message) {
+    return [];
+  }
+
+  const content = message.content as ContentBlock[] | undefined;
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  const chunks: StreamChunk[] = [];
+  for (const block of content) {
+    if (block.type === "text" && typeof block.text === "string") {
+      chunks.push({
+        type: "text",
+        content: block.text,
+        metadata: raw as Readonly<Record<string, unknown>>,
+      });
+    } else if (block.type === "thinking" && typeof block.text === "string") {
+      chunks.push({
+        type: "thinking",
+        content: block.text,
+        metadata: raw as Readonly<Record<string, unknown>>,
+      });
+    } else if (block.type === "tool_use") {
+      chunks.push({
+        type: "tool_use",
+        content: JSON.stringify({ name: block.name, input: block.input }),
+        metadata: {
+          ...raw,
+          tool_name: block.name,
+          tool_id: block.id,
+          args: block.input,
+        } as Readonly<Record<string, unknown>>,
+      });
+    } else if (block.type === "tool_result") {
+      chunks.push({
+        type: "tool_result",
+        content: typeof block.text === "string" ? block.text : JSON.stringify(block),
+        metadata: raw as Readonly<Record<string, unknown>>,
+      });
+    }
+  }
+
+  return chunks;
+}
+
+function parseRawMessage(raw: Record<string, unknown>): StreamChunk[] {
+  const type = raw.type as string;
+
+  if (type === "assistant") {
+    return extractTextFromAssistant(raw);
+  }
+
+  if (type === "result") {
+    const result = typeof raw.result === "string" ? raw.result : "";
+    const sessionId = raw.session_id ?? raw.sessionId;
+    return [
+      {
+        type: "result",
+        content: result,
+        metadata: {
+          session_id: sessionId,
+          subtype: raw.subtype,
+          is_error: raw.is_error,
+          duration_ms: raw.duration_ms,
+          num_turns: raw.num_turns,
+        } as Readonly<Record<string, unknown>>,
+      },
+    ];
+  }
+
+  if (type === "system") {
+    const subtype = raw.subtype as string | undefined;
+    // Emit system_init-like chunk for session tracking
+    if (raw.session_id) {
+      return [
+        {
+          type: "system",
+          content: subtype ?? "",
+          metadata: raw as Readonly<Record<string, unknown>>,
+        },
+      ];
+    }
+    // Skip noisy hook messages unless they carry a session_id
+    return [];
+  }
+
+  if (type === "error") {
+    return [
+      {
+        type: "error",
+        content: typeof raw.error === "string"
+          ? raw.error
+          : JSON.stringify(raw),
+        metadata: raw as Readonly<Record<string, unknown>>,
+      },
+    ];
+  }
+
+  // rate_limit_event, other types — skip silently
+  return [];
 }
 
 export function createNDJSONParser(options: NDJSONParserOptions) {
@@ -50,15 +139,10 @@ export function createNDJSONParser(options: NDJSONParserOptions) {
 
     try {
       const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      const chunk = parseRawMessage(parsed);
+      const chunks = parseRawMessage(parsed);
 
-      if (chunk) {
+      for (const chunk of chunks) {
         options.onMessage(chunk);
-      } else {
-        options.onParseError?.(
-          trimmed,
-          new Error(`Unknown or missing chunk type in: ${trimmed}`)
-        );
       }
     } catch (error) {
       options.onParseError?.(

@@ -141,7 +141,7 @@ export function createStreamController(
 
   function handleChunk(chunk: StreamChunk): void {
     // Remove loading indicator on first content chunk
-    if (controllerState.phase === "idle" && chunk.type !== "system_init") {
+    if (controllerState.phase === "idle" && chunk.type !== "system") {
       renderer.removeLoading();
     }
 
@@ -164,10 +164,9 @@ export function createStreamController(
       case "error":
         handleErrorChunk(chunk);
         break;
-      case "system_init":
-      case "control_request":
-        // Handled by ClauteroService directly
-        setState(updateLastMessage(getState(), chunk));
+      case "system":
+      case "rate_limit_event":
+        // System/rate messages handled by ClauteroService, not rendered
         break;
     }
   }

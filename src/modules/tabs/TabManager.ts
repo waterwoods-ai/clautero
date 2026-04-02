@@ -127,10 +127,10 @@ export function createTabManager(options: TabManagerOptions) {
         initTabRenderer(tab);
         tab.streamController?.handleChunk(chunk);
 
-        // Extract claude session id from system_init
+        // Extract claude session id from system or result messages
         const metadata = chunk.metadata ?? {};
         const sid = metadata.session_id ?? metadata.sessionId;
-        if (chunk.type === "system_init" && typeof sid === "string") {
+        if ((chunk.type === "system" || chunk.type === "result") && typeof sid === "string") {
           tab.claudeSessionId = sid;
         }
 
