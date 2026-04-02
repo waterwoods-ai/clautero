@@ -99,6 +99,31 @@ export function initSidebarManager(
   const iconPath = rootURI + "content/icons/chat.svg";
 
   try {
+    // bodyXHTML provides initial content so the collapsible section
+    // calculates a non-zero --open-height from scrollHeight.
+    const bodyXHTML = `<html:div xmlns:html="${XHTML_NS}" class="clautero-wrapper"
+      style="display:flex;flex-direction:column;width:100%;min-height:400px;
+             font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:13px;">
+      <html:div class="clautero-messages"
+        style="flex:1;overflow-y:auto;padding:8px 10px;min-height:200px;">
+        <html:p style="color:#888;font-style:italic;margin:20px 0;text-align:center;">
+          Ask Claude about your research...
+        </html:p>
+      </html:div>
+      <html:div class="clautero-context-bar" style="padding:0 8px;"></html:div>
+      <html:div style="display:flex;gap:6px;padding:8px;border-top:1px solid #ddd;">
+        <html:textarea class="clautero-input-textarea"
+          placeholder="Type a message..." rows="3"
+          style="flex:1;resize:none;border:1px solid #ccc;border-radius:6px;padding:8px;
+                 font-size:13px;font-family:inherit;outline:none;"></html:textarea>
+        <html:button class="clautero-input-send"
+          style="padding:8px 16px;border:none;border-radius:6px;cursor:pointer;
+                 background:#3584e4;color:white;font-size:13px;font-weight:600;align-self:flex-end;">
+          Send
+        </html:button>
+      </html:div>
+    </html:div>`;
+
     registeredSectionID = (Zotero as any).ItemPaneManager.registerSection({
       paneID: SECTION_ID,
       pluginID: PLUGIN_ID,
@@ -110,6 +135,7 @@ export function initSidebarManager(
         l10nID: "clautero-sidebar-title",
         icon: iconPath,
       },
+      bodyXHTML,
       onRender: ({
         body,
         item,
@@ -126,21 +152,35 @@ export function initSidebarManager(
           "info"
         );
 
-        // Build UI if body is empty
-        if (!body.querySelector(".clautero-wrapper")) {
-          const doc = body.ownerDocument;
-          registeredElements = buildChatUI(body, doc);
+        // Find elements from bodyXHTML (already in DOM)
+        if (!registeredElements) {
+          const messageArea = body.querySelector(".clautero-messages") as HTMLElement;
+          const contextBar = body.querySelector(".clautero-context-bar") as HTMLElement;
+          const textarea = body.querySelector(".clautero-input-textarea") as HTMLTextAreaElement;
+          const sendButton = body.querySelector(".clautero-input-send") as HTMLElement;
 
-          // Expose elements for hooks.ts chat wiring
-          (win as any).__clauteroSidebar = Object.freeze({
-            toggle: () => {},
-            show: () => {},
-            hide: () => {},
-            isVisible: () => true,
-            getElements: () => registeredElements,
-          });
+          if (messageArea && contextBar && textarea && sendButton) {
+            registeredElements = Object.freeze({ messageArea, contextBar, textarea, sendButton });
 
-          Zotero.log("[Clautero] Chat UI built in onRender", "info");
+            (win as any).__clauteroSidebar = Object.freeze({
+              toggle: () => {},
+              show: () => {},
+              hide: () => {},
+              isVisible: () => true,
+              getElements: () => registeredElements,
+            });
+
+            Zotero.log("[Clautero] Chat elements found from bodyXHTML", "info");
+          } else {
+            // Fallback: build from scratch
+            const doc = body.ownerDocument;
+            registeredElements = buildChatUI(body, doc);
+            (win as any).__clauteroSidebar = Object.freeze({
+              toggle: () => {}, show: () => {}, hide: () => {},
+              isVisible: () => true, getElements: () => registeredElements,
+            });
+            Zotero.log("[Clautero] Chat UI built from scratch in onRender", "info");
+          }
         }
       },
       onItemChange: ({
