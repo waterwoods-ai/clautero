@@ -116,18 +116,37 @@ function initChatSystem(
   addon: Addon,
   cleanupList: Array<() => void>
 ): void {
-  const sidebar = (win as any).__clauteroSidebar;
-  if (!sidebar) {
-    Zotero.log("[Clautero] Sidebar not available for chat init", "warning");
-    return;
-  }
+  // The item pane section renders lazily (when user selects an item).
+  // Poll until the sidebar elements are available, then wire up chat.
+  let chatInitialized = false;
+  const pollInterval = (win as any).setInterval(() => {
+    if (chatInitialized) {
+      return;
+    }
+    const sidebar = (win as any).__clauteroSidebar;
+    if (!sidebar) {
+      return;
+    }
+    const elements = sidebar.getElements();
+    if (!elements) {
+      return;
+    }
+    chatInitialized = true;
+    (win as any).clearInterval(pollInterval);
+    doInitChat(win, addon, elements, cleanupList);
+  }, 500);
 
-  const elements = sidebar.getElements();
-  if (!elements) {
-    Zotero.log("[Clautero] Sidebar elements not ready for chat init", "warning");
-    return;
-  }
+  cleanupList.push(() => {
+    (win as any).clearInterval(pollInterval);
+  });
+}
 
+function doInitChat(
+  win: Window,
+  addon: Addon,
+  elements: { messageArea: HTMLElement; textarea: HTMLTextAreaElement; sendButton: HTMLElement; contextBar: HTMLElement },
+  cleanupList: Array<() => void>
+): void {
   const { messageArea, textarea, sendButton, contextBar } = elements;
   const doc = win.document;
 

@@ -1,232 +1,156 @@
 /**
- * SidebarManager — Manages sidebar lifecycle, visibility, toolbar button,
- * and keyboard shortcut registration for the Clautero sidebar panel.
+ * SidebarManager — Registers Clautero as a section in Zotero's item pane
+ * using the official Zotero.ItemPaneManager.registerSection() API.
+ *
+ * This makes Clautero appear as a panel in the right sidebar alongside
+ * Info, Notes, Tags, etc.
  */
 
-import { createSidebarDOM } from "./SidebarDOM";
+const XHTML_NS = "http://www.w3.org/1999/xhtml";
+const SECTION_ID = "clautero-chat";
+const PLUGIN_ID = "clautero@zotero-plugin";
 
-const PREF_SIDEBAR_WIDTH = "extensions.clautero.sidebarWidth";
-const DEFAULT_WIDTH = 400;
-
-interface SidebarState {
-  readonly visible: boolean;
-  readonly width: number;
+interface SidebarElements {
+  readonly messageArea: HTMLElement;
+  readonly contextBar: HTMLElement;
+  readonly textarea: HTMLTextAreaElement;
+  readonly sendButton: HTMLElement;
 }
 
-function readWidth(): number {
-  try {
-    const width = Zotero.Prefs.get(PREF_SIDEBAR_WIDTH, true) as number;
-    return typeof width === "number" && width > 0 ? width : DEFAULT_WIDTH;
-  } catch {
-    return DEFAULT_WIDTH;
-  }
-}
+let registeredElements: SidebarElements | null = null;
+let sectionBody: HTMLElement | null = null;
 
-function persistWidth(width: number): void {
-  try {
-    Zotero.Prefs.set(PREF_SIDEBAR_WIDTH, width, true);
-  } catch (error) {
-    Zotero.log(`[Clautero] Failed to persist sidebar width: ${error}`, "warning");
+function buildChatUI(body: HTMLElement, doc: Document): SidebarElements {
+  // Clear existing content
+  while (body.firstChild) {
+    body.removeChild(body.firstChild);
   }
-}
 
-function createXUL(doc: Document, tag: string): Element {
-  if ("createXULElement" in doc) {
-    return (doc as any).createXULElement(tag);
-  }
-  return doc.createElementNS(
-    "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
-    tag
+  const wrapper = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+  wrapper.setAttribute("class", "clautero-sidebar-inner");
+  wrapper.setAttribute("style",
+    "display:flex;flex-direction:column;height:100%;width:100%;" +
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;"
   );
+
+  // Message area
+  const messageArea = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+  messageArea.setAttribute("class", "clautero-messages");
+  messageArea.setAttribute("style",
+    "flex:1;overflow-y:auto;padding:8px;min-height:200px;"
+  );
+
+  // Context bar
+  const contextBar = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+  contextBar.setAttribute("class", "clautero-context-bar");
+
+  // Input area
+  const inputArea = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+  inputArea.setAttribute("class", "clautero-input-area");
+  inputArea.setAttribute("style",
+    "display:flex;gap:4px;padding:8px;border-top:1px solid #ccc;"
+  );
+
+  const textarea = doc.createElementNS(XHTML_NS, "textarea") as HTMLTextAreaElement;
+  textarea.setAttribute("class", "clautero-input-textarea");
+  textarea.setAttribute("placeholder", "Ask Claude about your research\u2026");
+  textarea.setAttribute("rows", "3");
+  textarea.setAttribute("style",
+    "flex:1;resize:none;border:1px solid #ccc;border-radius:4px;padding:6px;font-size:13px;" +
+    "font-family:inherit;background:var(--material-background,#fff);color:var(--fill-primary,#1a1a1a);"
+  );
+
+  const sendButton = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
+  sendButton.setAttribute("class", "clautero-input-send");
+  sendButton.setAttribute("style",
+    "padding:6px 12px;border:none;border-radius:4px;cursor:pointer;" +
+    "background:#3584e4;color:white;font-size:13px;font-weight:600;align-self:flex-end;"
+  );
+  sendButton.textContent = "Send";
+
+  inputArea.appendChild(textarea);
+  inputArea.appendChild(sendButton);
+
+  wrapper.appendChild(messageArea);
+  wrapper.appendChild(contextBar);
+  wrapper.appendChild(inputArea);
+  body.appendChild(wrapper);
+
+  return Object.freeze({
+    messageArea,
+    contextBar,
+    textarea: textarea as HTMLTextAreaElement,
+    sendButton,
+  });
 }
 
-function addToolsMenuItem(doc: Document, onToggle: () => void): Element {
-  const menuItem = createXUL(doc, "menuitem");
-  menuItem.setAttribute("id", "clautero-tools-menu-item");
-  menuItem.setAttribute("label", "Clautero Sidebar");
-  menuItem.setAttribute("accesskey", "L");
-  menuItem.addEventListener("command", onToggle);
-
-  // Try multiple known menu popup IDs across Zotero versions
-  const menuPopup = doc.getElementById("menu_ToolsPopup")
-    ?? doc.getElementById("menu_toolsPopup")
-    ?? doc.querySelector("#menu_Tools menupopup")
-    ?? doc.querySelector("#menu_tools menupopup")
-    ?? doc.querySelector("menupopup[id*='ools']");
-
-  if (menuPopup) {
-    menuPopup.appendChild(menuItem);
-    Zotero.log(`[Clautero] Tools menu item added to: ${menuPopup.id || "menupopup"}`, "info");
-  } else {
-    // Fallback: log all menu IDs for debugging
-    const allMenus = doc.querySelectorAll("menupopup");
-    const ids = Array.from(allMenus).map(m => m.id || "(no id)").join(", ");
-    Zotero.log(`[Clautero] Could not find Tools menu. Available menupopups: ${ids}`, "warning");
-  }
-
-  return menuItem;
-}
-
-function createToolbarButton(doc: Document, onToggle: () => void): Element {
-  const button = createXUL(doc, "toolbarbutton");
-  button.setAttribute("id", "clautero-toolbar-button");
-  button.setAttribute("class", "zotero-tb-button");
-  button.setAttribute("tooltiptext", "Toggle Clautero sidebar (Ctrl+Shift+C)");
-  button.setAttribute("label", "C");
-  button.setAttribute("type", "button");
-  button.addEventListener("command", onToggle);
-
-  // Try multiple toolbar locations for Zotero 7 compatibility
-  const toolbar = doc.getElementById("zotero-tb-advanced")?.parentElement
-    ?? doc.getElementById("zotero-items-toolbar")
-    ?? doc.getElementById("zotero-toolbar")
-    ?? doc.querySelector("#navigator-toolbox toolbar")
-    ?? doc.querySelector("toolbar");
-
-  if (toolbar) {
-    toolbar.appendChild(button);
-    Zotero.log(`[Clautero] Toolbar button added to: ${toolbar.id || toolbar.tagName}`, "info");
-  } else {
-    Zotero.log("[Clautero] Could not find toolbar for button injection", "warning");
-  }
-
-  return button;
-}
-
-function registerKeyboardShortcut(
-  window: Window,
-  onToggle: () => void
-): () => void {
-  const handler = (event: KeyboardEvent) => {
-    const isMac = Zotero.isMac ?? navigator.platform.includes("Mac");
-    const modifier = isMac ? event.metaKey : event.ctrlKey;
-    if (modifier && event.shiftKey && event.key === "C") {
-      event.preventDefault();
-      event.stopPropagation();
-      onToggle();
-    }
-  };
-  window.addEventListener("keydown", handler, true);
-  return () => window.removeEventListener("keydown", handler, true);
-}
-
-/**
- * Initializes the sidebar manager for a given window.
- * Returns a cleanup function to be called on window unload.
- */
 export function initSidebarManager(
-  window: Window,
-  rootURI: string
+  _window: Window,
+  _rootURI: string
 ): () => void {
-  let state: SidebarState = Object.freeze({
-    visible: false,
-    width: readWidth(),
-  });
-
-  let domCleanup: (() => void) | null = null;
-  let sidebarElements: ReturnType<typeof createSidebarDOM>["elements"] | null = null;
-
-  const updateVisibility = () => {
-    if (!sidebarElements) {
-      return;
-    }
-    const { splitter, container } = sidebarElements;
-    if (state.visible) {
-      (splitter as HTMLElement).style.display = "";
-      (container as HTMLElement).style.display = "";
-    } else {
-      // Persist current width before hiding
-      const currentWidth = (container as Element).getAttribute("width");
-      if (currentWidth) {
-        persistWidth(parseInt(currentWidth, 10));
-      }
-      (splitter as HTMLElement).style.display = "none";
-      (container as HTMLElement).style.display = "none";
-    }
-  };
-
-  const show = () => {
-    if (state.visible) {
-      return;
-    }
-    if (!sidebarElements) {
-      try {
-        const result = createSidebarDOM(window, rootURI, {
-          width: state.width,
-          onClose: () => hide(),
-        });
-        sidebarElements = result.elements;
-        domCleanup = result.cleanup;
-      } catch (error) {
-        Zotero.log(`[Clautero] Failed to create sidebar DOM: ${error}`, "error");
-        return;
-      }
-    }
-    state = Object.freeze({ ...state, visible: true });
-    updateVisibility();
-    Zotero.log("[Clautero] Sidebar shown", "info");
-  };
-
-  const hide = () => {
-    if (!state.visible) {
-      return;
-    }
-    state = Object.freeze({ ...state, visible: false });
-    updateVisibility();
-    Zotero.log("[Clautero] Sidebar hidden", "info");
-  };
-
-  const toggle = () => {
-    if (state.visible) {
-      hide();
-    } else {
-      show();
-    }
-  };
-
-  const isVisible = (): boolean => state.visible;
-
-  // Register Tools menu item (most reliable entry point)
-  const menuItem = addToolsMenuItem(window.document, toggle);
-
-  // Register toolbar button
-  const toolbarButton = createToolbarButton(window.document, toggle);
-
-  // Register keyboard shortcut
-  const removeShortcut = registerKeyboardShortcut(window, toggle);
-
-  // Expose public API on the window for other modules
-  (window as any).__clauteroSidebar = Object.freeze({
-    toggle,
-    show,
-    hide,
-    isVisible,
-    getElements: () => sidebarElements,
-  });
-
-  // Auto-show sidebar on initialization so user can see it immediately
+  // Register as a section in Zotero's item pane
   try {
-    show();
-    Zotero.log("[Clautero] Sidebar auto-shown", "info");
+    (Zotero as any).ItemPaneManager.registerSection({
+      paneID: SECTION_ID,
+      pluginID: PLUGIN_ID,
+      header: {
+        l10nID: "clautero-sidebar-title",
+        icon: "chrome://zotero/skin/16/universal/chat.svg",
+      },
+      sidenav: {
+        l10nID: "clautero-sidebar-title",
+        icon: "chrome://zotero/skin/16/universal/chat.svg",
+      },
+      // Make the section take full height when expanded
+      bodyXHTML: `<div xmlns="${XHTML_NS}" id="clautero-section-body" style="min-height:400px;"></div>`,
+
+      onRender: ({ body, item }: { body: HTMLElement; item: any }) => {
+        if (!registeredElements) {
+          const doc = body.ownerDocument;
+          sectionBody = body;
+          registeredElements = buildChatUI(body, doc);
+          Zotero.log("[Clautero] Chat UI rendered in item pane section", "info");
+
+          // Expose for hooks.ts to wire up
+          (_window as any).__clauteroSidebar = Object.freeze({
+            toggle: () => {},
+            show: () => {},
+            hide: () => {},
+            isVisible: () => true,
+            getElements: () => registeredElements,
+          });
+        }
+      },
+
+      onItemChange: ({ item, setEnabled }: { item: any; setEnabled: (v: boolean) => void }) => {
+        // Always show the section regardless of selected item
+        setEnabled(true);
+        return true;
+      },
+    });
+    Zotero.log("[Clautero] Registered item pane section", "info");
   } catch (error) {
-    Zotero.log(`[Clautero] Failed to auto-show sidebar: ${error}`, "error");
+    Zotero.log(`[Clautero] Failed to register item pane section: ${error}`, "error");
+
+    // Fallback: try older API or log the error
+    try {
+      Zotero.log(`[Clautero] ItemPaneManager available: ${!!(Zotero as any).ItemPaneManager}`, "info");
+      const methods = Object.keys((Zotero as any).ItemPaneManager || {}).join(", ");
+      Zotero.log(`[Clautero] ItemPaneManager methods: ${methods}`, "info");
+    } catch {
+      // ignore
+    }
   }
 
-  // Return cleanup function
+  // Cleanup
   return () => {
     try {
-      hide();
-      removeShortcut();
-      toolbarButton.remove();
-      menuItem.remove();
-      if (domCleanup) {
-        domCleanup();
-        domCleanup = null;
-      }
-      sidebarElements = null;
-      delete (window as any).__clauteroSidebar;
+      (Zotero as any).ItemPaneManager.unregisterSection(SECTION_ID);
+      registeredElements = null;
+      sectionBody = null;
+      delete (_window as any).__clauteroSidebar;
     } catch (error) {
-      Zotero.log(`[Clautero] Error during sidebar cleanup: ${error}`, "warning");
+      Zotero.log(`[Clautero] Cleanup error: ${error}`, "warning");
     }
   };
 }
