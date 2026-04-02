@@ -1,0 +1,188 @@
+/* Clautero Sidebar Styles
+ * Uses Zotero CSS custom properties for theme compatibility (dark/light).
+ */
+
+/* ── Splitter ── */
+
+.clautero-splitter {
+  border: none;
+  min-width: 4px;
+  max-width: 6px;
+  background-color: var(--material-border, #ccc);
+  cursor: col-resize;
+}
+
+.clautero-splitter:hover {
+  background-color: var(--color-accent, #3584e4);
+}
+
+/* ── Sidebar Container ── */
+
+#clautero-sidebar {
+  min-width: 280px;
+  max-width: 800px;
+  background-color: var(--material-background, #fff);
+  color: var(--fill-primary, #1a1a1a);
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-size: var(--font-size, 13px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-inline-start: 1px solid var(--material-border, #ccc);
+}
+
+/* ── Header ── */
+
+.clautero-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--material-border, #ccc);
+  background-color: var(--material-toolbar, var(--material-background, #f5f5f5));
+  flex-shrink: 0;
+  min-height: 36px;
+}
+
+.clautero-header-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--fill-primary, #1a1a1a);
+  user-select: none;
+}
+
+.clautero-header-close {
+  appearance: none;
+  background: none;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--fill-secondary, #666);
+}
+
+.clautero-header-close:hover {
+  background-color: var(--material-mix-quinary, rgba(0, 0, 0, 0.08));
+  color: var(--fill-primary, #1a1a1a);
+}
+
+/* ── Messages Area ── */
+
+.clautero-messages {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px;
+  scroll-behavior: smooth;
+}
+
+.clautero-messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.clautero-messages::-webkit-scrollbar-thumb {
+  background-color: var(--fill-quinary, rgba(0, 0, 0, 0.15));
+  border-radius: 3px;
+}
+
+.clautero-messages::-webkit-scrollbar-thumb:hover {
+  background-color: var(--fill-quaternary, rgba(0, 0, 0, 0.25));
+}
+
+/* ── Context Chip Bar ── */
+
+.clautero-context-bar {
+  flex-shrink: 0;
+  padding: 0 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.clautero-context-bar:empty {
+  display: none;
+}
+
+/* ── Input Area ── */
+
+.clautero-input-area {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--material-border, #ccc);
+  background-color: var(--material-toolbar, var(--material-background, #f5f5f5));
+}
+
+.clautero-input-textarea {
+  appearance: none;
+  width: 100%;
+  min-height: 60px;
+  max-height: 200px;
+  padding: 8px 10px;
+  border: 1px solid var(--material-border, #ccc);
+  border-radius: 6px;
+  background-color: var(--material-background, #fff);
+  color: var(--fill-primary, #1a1a1a);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.clautero-input-textarea:focus {
+  outline: none;
+  border-color: var(--color-accent, #3584e4);
+  box-shadow: 0 0 0 1px var(--color-accent, #3584e4);
+}
+
+.clautero-input-textarea::placeholder {
+  color: var(--fill-tertiary, #999);
+}
+
+.clautero-input-send {
+  appearance: none;
+  align-self: flex-end;
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  background-color: var(--color-accent, #3584e4);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.clautero-input-send:hover {
+  filter: brightness(1.1);
+}
+
+.clautero-input-send:active {
+  filter: brightness(0.95);
+}
+
+.clautero-input-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Dark Theme Overrides ── */
+
+@media (prefers-color-scheme: dark) {
+  .clautero-header-close:hover {
+    background-color: var(--material-mix-quinary, rgba(255, 255, 255, 0.1));
+  }
+
+  .clautero-messages::-webkit-scrollbar-thumb {
+    background-color: var(--fill-quinary, rgba(255, 255, 255, 0.15));
+  }
+
+  .clautero-messages::-webkit-scrollbar-thumb:hover {
+    background-color: var(--fill-quaternary, rgba(255, 255, 255, 0.25));
+  }
+}
