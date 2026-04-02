@@ -30,14 +30,15 @@ function buildChatUI(body: HTMLElement, doc: Document): SidebarElements {
   wrapper.setAttribute("class", "clautero-sidebar-inner");
   wrapper.setAttribute("style",
     "display:flex;flex-direction:column;height:100%;width:100%;" +
-    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;"
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;" +
+    "flex-grow:1;overflow:hidden;"
   );
 
-  // Message area
+  // Message area — takes all remaining space
   const messageArea = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
   messageArea.setAttribute("class", "clautero-messages");
   messageArea.setAttribute("style",
-    "flex:1;overflow-y:auto;padding:8px;min-height:200px;"
+    "flex-grow:1;overflow-y:auto;padding:8px 10px;min-height:100px;"
   );
 
   // Context bar
@@ -101,13 +102,19 @@ export function initSidebarManager(
         l10nID: "clautero-sidebar-title",
         icon: "chrome://zotero/skin/16/universal/chat.svg",
       },
-      // Make the section take full height when expanded
-      bodyXHTML: `<div xmlns="${XHTML_NS}" id="clautero-section-body" style="min-height:400px;"></div>`,
-
       onRender: ({ body, item }: { body: HTMLElement; item: any }) => {
         if (!registeredElements) {
           const doc = body.ownerDocument;
           sectionBody = body;
+
+          // Make the section body fill the entire available height
+          // (same approach as zotero-ai-tab)
+          body.style.display = "flex";
+          body.style.flexDirection = "column";
+          body.style.height = "100%";
+          body.style.overflow = "hidden";
+          body.style.padding = "0";
+
           registeredElements = buildChatUI(body, doc);
           Zotero.log("[Clautero] Chat UI rendered in item pane section", "info");
 
