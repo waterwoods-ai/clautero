@@ -31,18 +31,35 @@ function persistWidth(width: number): void {
 }
 
 function createToolbarButton(doc: Document, onToggle: () => void): Element {
-  const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
-  const button = doc.createElementNS(XUL_NS, "toolbarbutton");
+  // Zotero 7 uses createXULElement when available, fallback to createElementNS
+  const createXUL = (tag: string): Element => {
+    if ("createXULElement" in doc) {
+      return (doc as any).createXULElement(tag);
+    }
+    return doc.createElementNS(
+      "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
+      tag
+    );
+  };
+
+  const button = createXUL("toolbarbutton");
   button.setAttribute("id", "clautero-toolbar-button");
   button.setAttribute("class", "zotero-tb-button");
   button.setAttribute("tooltiptext", "Toggle Clautero sidebar (Ctrl+Shift+C)");
-  button.setAttribute("label", "Clautero");
+  button.setAttribute("label", "C");
+  button.setAttribute("type", "button");
   button.addEventListener("command", onToggle);
 
-  const toolbar = doc.getElementById("zotero-items-toolbar")
+  // Try multiple toolbar locations for Zotero 7 compatibility
+  const toolbar = doc.getElementById("zotero-tb-advanced")?.parentElement
+    ?? doc.getElementById("zotero-items-toolbar")
+    ?? doc.getElementById("zotero-toolbar")
+    ?? doc.querySelector("#navigator-toolbox toolbar")
     ?? doc.querySelector("toolbar");
+
   if (toolbar) {
     toolbar.appendChild(button);
+    Zotero.log(`[Clautero] Toolbar button added to: ${toolbar.id || toolbar.tagName}`, "info");
   } else {
     Zotero.log("[Clautero] Could not find toolbar for button injection", "warning");
   }

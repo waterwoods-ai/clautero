@@ -150,18 +150,31 @@ export function createSidebarDOM(
   htmlWrapper.appendChild(inputArea);
   container.appendChild(htmlWrapper);
 
-  // Find injection point: the main horizontal layout
-  const mainHbox = doc.getElementById("browser-border-start")?.parentElement
-    ?? doc.querySelector("hbox.zotero-main")
-    ?? doc.querySelector("#main-window > hbox")
+  // Find injection point: Zotero 7's main horizontal layout
+  // Try multiple selectors for robustness across Zotero versions
+  const mainLayout = doc.getElementById("zotero-main-layout")
+    ?? doc.getElementById("main-window")?.querySelector("hbox")
+    ?? doc.querySelector("#browser-border-start")?.parentElement
+    ?? doc.querySelector("hbox[flex]")
     ?? doc.querySelector("#main-window hbox");
 
-  if (!mainHbox) {
-    throw new Error("[Clautero] Could not find main window layout for sidebar injection");
+  if (!mainLayout) {
+    // Fallback: append to the document's main element
+    const fallback = doc.documentElement;
+    Zotero.log(
+      "[Clautero] Could not find main layout, appending to document root",
+      "warning"
+    );
+    fallback.appendChild(splitter);
+    fallback.appendChild(container);
+  } else {
+    mainLayout.appendChild(splitter);
+    mainLayout.appendChild(container);
+    Zotero.log(
+      `[Clautero] Sidebar injected into: ${mainLayout.id || mainLayout.tagName}`,
+      "info"
+    );
   }
-
-  mainHbox.appendChild(splitter);
-  mainHbox.appendChild(container);
 
   const elements: SidebarElements = Object.freeze({
     splitter,

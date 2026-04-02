@@ -139,6 +139,8 @@ declare namespace Zotero {
     getSelectedItems(): any[];
   };
 
+  function getMainWindows(): Window[];
+
 }
 
 // Navigator global

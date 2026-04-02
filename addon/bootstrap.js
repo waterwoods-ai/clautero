@@ -21,15 +21,31 @@ async function startup({ id, version, resourceURI, rootURI }, _reason) {
     ["content", "clautero", rootURI + "content/"],
   ]);
 
+  // Set rootURI on Zotero global so the bundled IIFE can access it
+  Zotero.__clauteroRootURI = rootURI;
+
   Services.scriptloader.loadSubScript(
-    rootURI + "content/clautero.js",
-    { rootURI }
+    rootURI + "content/clautero.js"
   );
 
   Zotero.Clautero.hooks.onStartup();
+
+  // If the main window is already open (e.g., plugin installed/enabled at runtime),
+  // onMainWindowLoad won't fire automatically. Trigger it manually.
+  var windows = Zotero.getMainWindows();
+  if (windows && windows.length > 0) {
+    for (var win of windows) {
+      if (win && !win.closed) {
+        onMainWindowLoad({ window: win });
+      }
+    }
+  }
 }
 
 function onMainWindowLoad({ window }) {
+  if (!Zotero.Clautero) {
+    return;
+  }
   Zotero.Clautero.hooks.onMainWindowLoad(window);
 }
 
