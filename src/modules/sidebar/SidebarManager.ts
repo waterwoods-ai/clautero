@@ -91,20 +91,18 @@ export function initSidebarManager(
 ): () => void {
   // Register as a section in Zotero's item pane
   try {
-    // Simple inline SVG data URI for the chat bubble icon
-    const chatIcon = "data:image/svg+xml," + encodeURIComponent(
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="currentColor" d="M8 1C4.1 1 1 3.6 1 7c0 1.8 1 3.4 2.5 4.5L3 14l3-1.8c.6.2 1.3.3 2 .3 3.9 0 7-2.6 7-6S11.9 1 8 1z"/></svg>'
-    );
+    // Zotero 8 requires l10nID for header/sidenav. Register our Fluent strings first.
+    const chatIcon = "chrome://clautero/content/icons/chat.svg";
 
     (Zotero as any).ItemPaneManager.registerSection({
       paneID: SECTION_ID,
       pluginID: PLUGIN_ID,
       header: {
-        label: "Clautero",
+        l10nID: "clautero-sidebar-title",
         icon: chatIcon,
       },
       sidenav: {
-        label: "Clautero",
+        l10nID: "clautero-sidebar-title",
         icon: chatIcon,
       },
       onRender: ({ body, item }: { body: HTMLElement; item: any }) => {

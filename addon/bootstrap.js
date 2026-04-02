@@ -20,7 +20,10 @@ async function startup({ id, version, resourceURI, rootURI }, _reason) {
     var manifestURI = Services.io.newURI(rootURI + "manifest.json");
     chromeHandle = aomStartup.registerChrome(manifestURI, [
       ["content", "clautero", rootURI + "content/"],
+      ["locale", "clautero", "en-US", rootURI + "locale/en-US/"],
     ]);
+
+    // Fluent FTL files in locale/ are auto-registered by Zotero via chrome manifest.
 
     // Set rootURI on Zotero global so the bundled IIFE can access it
     Zotero.__clauteroRootURI = rootURI;
@@ -54,6 +57,9 @@ async function startup({ id, version, resourceURI, rootURI }, _reason) {
 
 function onMainWindowLoad({ window }) {
   try {
+    // Load Fluent localization file into this window
+    window.MozXULElement.insertFTLIfNeeded("addon.ftl");
+
     if (Zotero && Zotero.Clautero && Zotero.Clautero.hooks) {
       Zotero.Clautero.hooks.onMainWindowLoad(window);
     }
