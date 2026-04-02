@@ -85,6 +85,15 @@ export function initSidebarManager(
     Zotero.log(`[Clautero] insertFTLIfNeeded failed: ${e}`, "warning");
   }
 
+  // Force the section to be open (preference may have been set to false)
+  try {
+    const prefKey = `panes.${PLUGIN_ID}-${SECTION_ID}.open`;
+    Zotero.Prefs.set(prefKey, true);
+    Zotero.log(`[Clautero] Set ${prefKey} = true`, "info");
+  } catch (e) {
+    Zotero.log(`[Clautero] Could not set open pref: ${e}`, "warning");
+  }
+
   // Step 2: Register item pane section
   // Per Zotero 8 guide: icon should use rootURI + path
   const iconPath = rootURI + "content/icons/chat.svg";
