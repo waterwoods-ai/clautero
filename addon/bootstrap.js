@@ -1,64 +1,87 @@
 /* eslint-disable no-undef */
-/* global ChromeUtils, Services */
+/* global ChromeUtils, Services, Zotero, Components, APP_SHUTDOWN */
 
 var chromeHandle;
 
 function install(_data, _reason) {}
 
 async function startup({ id, version, resourceURI, rootURI }, _reason) {
-  await Zotero.initializationPromise;
+  try {
+    await Zotero.initializationPromise;
 
-  if (typeof rootURI === "undefined") {
-    rootURI = resourceURI.spec;
-  }
+    if (typeof rootURI === "undefined") {
+      rootURI = resourceURI.spec;
+    }
 
-  var aomStartup = Components.classes[
-    "@mozilla.org/addons/addon-manager-startup;1"
-  ].getService(Components.interfaces.amIAddonManagerStartup);
+    var aomStartup = Components.classes[
+      "@mozilla.org/addons/addon-manager-startup;1"
+    ].getService(Components.interfaces.amIAddonManagerStartup);
 
-  var manifestURI = Services.io.newURI(rootURI + "manifest.json");
-  chromeHandle = aomStartup.registerChrome(manifestURI, [
-    ["content", "clautero", rootURI + "content/"],
-  ]);
+    var manifestURI = Services.io.newURI(rootURI + "manifest.json");
+    chromeHandle = aomStartup.registerChrome(manifestURI, [
+      ["content", "clautero", rootURI + "content/"],
+    ]);
 
-  // Set rootURI on Zotero global so the bundled IIFE can access it
-  Zotero.__clauteroRootURI = rootURI;
+    // Set rootURI on Zotero global so the bundled IIFE can access it
+    Zotero.__clauteroRootURI = rootURI;
 
-  Services.scriptloader.loadSubScript(
-    rootURI + "content/clautero.js"
-  );
+    Services.scriptloader.loadSubScript(
+      rootURI + "content/clautero.js"
+    );
 
-  Zotero.Clautero.hooks.onStartup();
+    await Zotero.Clautero.hooks.onStartup();
 
-  // If the main window is already open (e.g., plugin installed/enabled at runtime),
-  // onMainWindowLoad won't fire automatically. Trigger it manually.
-  var windows = Zotero.getMainWindows();
-  if (windows && windows.length > 0) {
-    for (var win of windows) {
-      if (win && !win.closed) {
-        onMainWindowLoad({ window: win });
+    // If main windows are already open (runtime install/enable), trigger manually
+    if (typeof Zotero.getMainWindows === "function") {
+      var windows = Zotero.getMainWindows();
+      for (var i = 0; i < windows.length; i++) {
+        var win = windows[i];
+        if (win && !win.closed) {
+          try {
+            onMainWindowLoad({ window: win });
+          } catch (e) {
+            Zotero.logError("[Clautero] Error in manual window load: " + e);
+          }
+        }
       }
+    }
+  } catch (e) {
+    if (typeof Zotero !== "undefined") {
+      Zotero.logError("[Clautero] Startup error: " + e);
     }
   }
 }
 
 function onMainWindowLoad({ window }) {
-  if (!Zotero.Clautero) {
-    return;
+  try {
+    if (Zotero && Zotero.Clautero && Zotero.Clautero.hooks) {
+      Zotero.Clautero.hooks.onMainWindowLoad(window);
+    }
+  } catch (e) {
+    Zotero.logError("[Clautero] onMainWindowLoad error: " + e);
   }
-  Zotero.Clautero.hooks.onMainWindowLoad(window);
 }
 
 function onMainWindowUnload({ window }) {
-  Zotero.Clautero.hooks.onMainWindowUnload(window);
+  try {
+    if (Zotero && Zotero.Clautero && Zotero.Clautero.hooks) {
+      Zotero.Clautero.hooks.onMainWindowUnload(window);
+    }
+  } catch (e) {
+    Zotero.logError("[Clautero] onMainWindowUnload error: " + e);
+  }
 }
 
 function shutdown({ id, version, resourceURI, rootURI }, reason) {
   if (reason === APP_SHUTDOWN) {
     return;
   }
-  if (typeof Zotero !== "undefined" && Zotero.Clautero) {
-    Zotero.Clautero.hooks.onShutdown();
+  try {
+    if (typeof Zotero !== "undefined" && Zotero.Clautero) {
+      Zotero.Clautero.hooks.onShutdown();
+    }
+  } catch (e) {
+    // ignore shutdown errors
   }
   if (chromeHandle) {
     chromeHandle.destruct();

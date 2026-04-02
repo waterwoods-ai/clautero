@@ -30,19 +30,37 @@ function persistWidth(width: number): void {
   }
 }
 
-function createToolbarButton(doc: Document, onToggle: () => void): Element {
-  // Zotero 7 uses createXULElement when available, fallback to createElementNS
-  const createXUL = (tag: string): Element => {
-    if ("createXULElement" in doc) {
-      return (doc as any).createXULElement(tag);
-    }
-    return doc.createElementNS(
-      "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
-      tag
-    );
-  };
+function createXUL(doc: Document, tag: string): Element {
+  if ("createXULElement" in doc) {
+    return (doc as any).createXULElement(tag);
+  }
+  return doc.createElementNS(
+    "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
+    tag
+  );
+}
 
-  const button = createXUL("toolbarbutton");
+function addToolsMenuItem(doc: Document, onToggle: () => void): Element {
+  const menuItem = createXUL(doc, "menuitem");
+  menuItem.setAttribute("id", "clautero-tools-menu-item");
+  menuItem.setAttribute("label", "Clautero Sidebar");
+  menuItem.setAttribute("accesskey", "L");
+  menuItem.addEventListener("command", onToggle);
+
+  // Insert into Tools menu
+  const toolsMenu = doc.getElementById("menu_ToolsPopup");
+  if (toolsMenu) {
+    toolsMenu.appendChild(menuItem);
+    Zotero.log("[Clautero] Tools menu item added", "info");
+  } else {
+    Zotero.log("[Clautero] Could not find Tools menu", "warning");
+  }
+
+  return menuItem;
+}
+
+function createToolbarButton(doc: Document, onToggle: () => void): Element {
+  const button = createXUL(doc, "toolbarbutton");
   button.setAttribute("id", "clautero-toolbar-button");
   button.setAttribute("class", "zotero-tb-button");
   button.setAttribute("tooltiptext", "Toggle Clautero sidebar (Ctrl+Shift+C)");
@@ -160,6 +178,9 @@ export function initSidebarManager(
 
   const isVisible = (): boolean => state.visible;
 
+  // Register Tools menu item (most reliable entry point)
+  const menuItem = addToolsMenuItem(window.document, toggle);
+
   // Register toolbar button
   const toolbarButton = createToolbarButton(window.document, toggle);
 
@@ -181,6 +202,7 @@ export function initSidebarManager(
       hide();
       removeShortcut();
       toolbarButton.remove();
+      menuItem.remove();
       if (domCleanup) {
         domCleanup();
         domCleanup = null;
