@@ -30,6 +30,15 @@ export function initSidebarManager(
     (win as any).MozXULElement.insertFTLIfNeeded("addon.ftl");
   } catch { /* ignore */ }
 
+  // Force the section open preference BEFORE registration
+  // Zotero stores as: extensions.zotero.panes.{pluginID}-{paneID}.open
+  try {
+    Zotero.Prefs.set(`panes.${FULL_PANE_ID}.open`, true);
+    Zotero.log(`[Clautero] Set panes.${FULL_PANE_ID}.open = true`, "info");
+  } catch (e) {
+    Zotero.log(`[Clautero] Could not set open pref: ${e}`, "warning");
+  }
+
   // Register section
   const iconPath = rootURI + "content/icons/chat.svg";
   let registered = false;
