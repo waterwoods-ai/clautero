@@ -25,7 +25,7 @@ await esbuild.build({
 cpSync("addon", addonDir, { recursive: true });
 
 // Build .xpi (just a zip)
-const xpiName = "clautero-0.1.0.xpi";
+const xpiName = "clautero-0.2.0.xpi";
 const xpiPath = join(outDir, xpiName);
 if (existsSync(xpiPath)) {
   rmSync(xpiPath);
