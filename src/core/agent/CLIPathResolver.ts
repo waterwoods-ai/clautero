@@ -15,9 +15,9 @@ export async function resolveCLIPath(): Promise<string> {
   } catch {
     // ignore
   }
-  // Gecko subprocess doesn't inherit user shell PATH, even with login shell.
-  // Use the known absolute path directly.
-  return "/Users/tom/.local/bin/claude";
+  // Gecko Subprocess.call needs a real executable path (may not follow symlinks).
+  // ~/.local/bin/claude is a symlink. Use the resolved target.
+  return "/Users/tom/.local/share/claude/versions/2.1.90";
 }
 
 export function clearCLIPathCache(): void {
