@@ -1,13 +1,14 @@
 /**
- * SidebarManager — Registers Clautero as a section in Zotero's item pane
- * using Zotero.ItemPaneManager.registerSection().
+ * SidebarManager — Registers Clautero in Zotero's item pane.
  *
- * Reference: https://gist.github.com/EwoutH/04c8df5a97963b5b46cec9f392ceb103
+ * Uses ItemPaneManager.registerSection() for the sidenav icon,
+ * then polls the DOM to force the section open and inject the chat UI.
  */
 
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const SECTION_ID = "clautero-chat";
 const PLUGIN_ID = "clautero@zotero-plugin";
+const FULL_PANE_ID = `${PLUGIN_ID}-${SECTION_ID}`;
 
 interface SidebarElements {
   readonly messageArea: HTMLElement;
@@ -17,36 +18,146 @@ interface SidebarElements {
 }
 
 let registeredElements: SidebarElements | null = null;
-let registeredSectionID: string | null = null;
 
-function buildChatUI(body: HTMLElement, doc: Document): SidebarElements {
-  // Clear body
-  while (body.firstChild) {
-    body.removeChild(body.firstChild);
+export function initSidebarManager(
+  win: Window,
+  rootURI: string
+): () => void {
+  const doc = win.document;
+
+  // Load FTL
+  try {
+    (win as any).MozXULElement.insertFTLIfNeeded("addon.ftl");
+  } catch { /* ignore */ }
+
+  // Register section
+  const iconPath = rootURI + "content/icons/chat.svg";
+  let registered = false;
+
+  try {
+    (Zotero as any).ItemPaneManager.registerSection({
+      paneID: SECTION_ID,
+      pluginID: PLUGIN_ID,
+      header: {
+        l10nID: "clautero-sidebar-title",
+        icon: iconPath,
+      },
+      sidenav: {
+        l10nID: "clautero-sidebar-title",
+        icon: iconPath,
+      },
+      onRender: ({ body }: { body: HTMLElement }) => {
+        // If body is empty, build UI
+        if (!body.querySelector(".clautero-chat-root")) {
+          buildUI(body, doc, win);
+        }
+      },
+      onItemChange: ({ setEnabled }: { setEnabled: (v: boolean) => void }) => {
+        setEnabled(true);
+        return true;
+      },
+    });
+    registered = true;
+    Zotero.log("[Clautero] Section registered", "info");
+  } catch (e) {
+    Zotero.log(`[Clautero] registerSection failed: ${e}`, "error");
   }
 
-  const wrapper = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-  wrapper.className = "clautero-wrapper";
-  wrapper.style.cssText =
+  // Force the section open and visible via DOM polling
+  let pollCount = 0;
+  const poll = (win as any).setInterval(() => {
+    pollCount++;
+    if (pollCount > 120) {
+      (win as any).clearInterval(poll);
+      return;
+    }
+
+    // Find the custom section element
+    const section = doc.querySelector(
+      `[data-pane="${FULL_PANE_ID}"]`
+    ) as HTMLElement | null;
+
+    if (!section) {
+      if (pollCount % 10 === 0) {
+        Zotero.log(`[Clautero] Poll ${pollCount}: section not found yet`, "info");
+      }
+      return;
+    }
+
+    // Found it - stop polling
+    (win as any).clearInterval(poll);
+    Zotero.log(`[Clautero] Section element found after ${pollCount} polls`, "info");
+
+    // Force section visible (not hidden)
+    const sectionParent = section.closest("item-pane-custom-section") as HTMLElement;
+    if (sectionParent) {
+      sectionParent.hidden = false;
+      sectionParent.style.display = "";
+      Zotero.log("[Clautero] Section parent unhidden", "info");
+    }
+
+    // Force collapsible section open
+    try {
+      if ("open" in section) {
+        (section as any).open = true;
+      }
+      section.setAttribute("open", "");
+      section.toggleAttribute("open", true);
+    } catch (e) {
+      Zotero.log(`[Clautero] Could not set open: ${e}`, "warning");
+    }
+
+    // Find the body and inject UI
+    const body = section.querySelector('[data-type="body"]') as HTMLElement
+      ?? section.querySelector(".body") as HTMLElement
+      ?? section.lastElementChild as HTMLElement;
+
+    if (body && !body.querySelector(".clautero-chat-root")) {
+      body.style.minHeight = "400px";
+      body.style.overflow = "visible";
+      buildUI(body, doc, win);
+
+      // Force recalc --open-height
+      const head = section.querySelector(".head");
+      if (head && head.nextElementSibling) {
+        const h = (head.nextElementSibling as HTMLElement).scrollHeight;
+        section.style.setProperty("--open-height", h > 0 ? `${h}px` : "auto");
+        Zotero.log(`[Clautero] Set --open-height: ${h}px`, "info");
+      }
+    }
+  }, 500);
+
+  return () => {
+    (win as any).clearInterval(poll);
+    if (registered) {
+      try {
+        (Zotero as any).ItemPaneManager.unregisterSection(SECTION_ID);
+      } catch { /* ignore */ }
+    }
+    registeredElements = null;
+    delete (win as any).__clauteroSidebar;
+  };
+}
+
+function buildUI(body: HTMLElement, doc: Document, win: Window): void {
+  const root = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+  root.className = "clautero-chat-root";
+  root.style.cssText =
     "display:flex;flex-direction:column;width:100%;min-height:400px;" +
     "font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:13px;";
 
-  // Message area
   const messageArea = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
   messageArea.className = "clautero-messages";
-  messageArea.style.cssText = "flex:1;overflow-y:auto;padding:8px 10px;min-height:200px;";
+  messageArea.style.cssText = "flex:1;overflow-y:auto;padding:8px;min-height:200px;";
 
   const welcome = doc.createElementNS(XHTML_NS, "p") as HTMLElement;
-  welcome.style.cssText = "color:#888;font-style:italic;margin:20px 0;text-align:center;";
+  welcome.style.cssText = "color:#888;font-style:italic;text-align:center;margin:20px 0;";
   welcome.textContent = "Ask Claude about your research...";
   messageArea.appendChild(welcome);
 
-  // Context bar
   const contextBar = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
   contextBar.className = "clautero-context-bar";
-  contextBar.style.cssText = "padding:0 8px;";
 
-  // Input area
   const inputArea = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
   inputArea.style.cssText = "display:flex;gap:6px;padding:8px;border-top:1px solid #ddd;";
 
@@ -65,166 +176,18 @@ function buildChatUI(body: HTMLElement, doc: Document): SidebarElements {
 
   inputArea.appendChild(textarea);
   inputArea.appendChild(sendButton);
-  wrapper.appendChild(messageArea);
-  wrapper.appendChild(contextBar);
-  wrapper.appendChild(inputArea);
-  body.appendChild(wrapper);
+  root.appendChild(messageArea);
+  root.appendChild(contextBar);
+  root.appendChild(inputArea);
+  body.appendChild(root);
 
-  return Object.freeze({ messageArea, contextBar, textarea, sendButton });
-}
+  registeredElements = Object.freeze({ messageArea, contextBar, textarea, sendButton });
 
-export function initSidebarManager(
-  win: Window,
-  rootURI: string
-): () => void {
-  // Step 1: Load FTL into the window BEFORE registerSection
-  try {
-    (win as any).MozXULElement.insertFTLIfNeeded("addon.ftl");
-    Zotero.log("[Clautero] FTL loaded via insertFTLIfNeeded", "info");
-  } catch (e) {
-    Zotero.log(`[Clautero] insertFTLIfNeeded failed: ${e}`, "warning");
-  }
+  (win as any).__clauteroSidebar = Object.freeze({
+    toggle: () => {}, show: () => {}, hide: () => {},
+    isVisible: () => true,
+    getElements: () => registeredElements,
+  });
 
-  // Force the section to be open (preference may have been set to false)
-  try {
-    const prefKey = `panes.${PLUGIN_ID}-${SECTION_ID}.open`;
-    Zotero.Prefs.set(prefKey, true);
-    Zotero.log(`[Clautero] Set ${prefKey} = true`, "info");
-  } catch (e) {
-    Zotero.log(`[Clautero] Could not set open pref: ${e}`, "warning");
-  }
-
-  // Step 2: Register item pane section
-  // Per Zotero 8 guide: icon should use rootURI + path
-  const iconPath = rootURI + "content/icons/chat.svg";
-
-  try {
-    // bodyXHTML provides initial content so the collapsible section
-    // calculates a non-zero --open-height from scrollHeight.
-    const bodyXHTML = `<html:div xmlns:html="${XHTML_NS}" class="clautero-wrapper"
-      style="display:flex;flex-direction:column;width:100%;min-height:400px;
-             font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:13px;">
-      <html:div class="clautero-messages"
-        style="flex:1;overflow-y:auto;padding:8px 10px;min-height:200px;">
-        <html:p style="color:#888;font-style:italic;margin:20px 0;text-align:center;">
-          Ask Claude about your research...
-        </html:p>
-      </html:div>
-      <html:div class="clautero-context-bar" style="padding:0 8px;"></html:div>
-      <html:div style="display:flex;gap:6px;padding:8px;border-top:1px solid #ddd;">
-        <html:textarea class="clautero-input-textarea"
-          placeholder="Type a message..." rows="3"
-          style="flex:1;resize:none;border:1px solid #ccc;border-radius:6px;padding:8px;
-                 font-size:13px;font-family:inherit;outline:none;"></html:textarea>
-        <html:button class="clautero-input-send"
-          style="padding:8px 16px;border:none;border-radius:6px;cursor:pointer;
-                 background:#3584e4;color:white;font-size:13px;font-weight:600;align-self:flex-end;">
-          Send
-        </html:button>
-      </html:div>
-    </html:div>`;
-
-    registeredSectionID = (Zotero as any).ItemPaneManager.registerSection({
-      paneID: SECTION_ID,
-      pluginID: PLUGIN_ID,
-      header: {
-        l10nID: "clautero-sidebar-title",
-        icon: iconPath,
-      },
-      sidenav: {
-        l10nID: "clautero-sidebar-title",
-        icon: iconPath,
-      },
-      bodyXHTML,
-      onRender: ({
-        body,
-        item,
-        editable,
-        tabType,
-      }: {
-        body: HTMLElement;
-        item: any;
-        editable: boolean;
-        tabType: string;
-      }) => {
-        Zotero.log(
-          `[Clautero] onRender: children=${body.childElementCount}, tabType=${tabType}`,
-          "info"
-        );
-
-        // Find elements from bodyXHTML (already in DOM)
-        if (!registeredElements) {
-          const messageArea = body.querySelector(".clautero-messages") as HTMLElement;
-          const contextBar = body.querySelector(".clautero-context-bar") as HTMLElement;
-          const textarea = body.querySelector(".clautero-input-textarea") as HTMLTextAreaElement;
-          const sendButton = body.querySelector(".clautero-input-send") as HTMLElement;
-
-          if (messageArea && contextBar && textarea && sendButton) {
-            registeredElements = Object.freeze({ messageArea, contextBar, textarea, sendButton });
-
-            (win as any).__clauteroSidebar = Object.freeze({
-              toggle: () => {},
-              show: () => {},
-              hide: () => {},
-              isVisible: () => true,
-              getElements: () => registeredElements,
-            });
-
-            Zotero.log("[Clautero] Chat elements found from bodyXHTML", "info");
-          } else {
-            // Fallback: build from scratch
-            const doc = body.ownerDocument;
-            registeredElements = buildChatUI(body, doc);
-            (win as any).__clauteroSidebar = Object.freeze({
-              toggle: () => {}, show: () => {}, hide: () => {},
-              isVisible: () => true, getElements: () => registeredElements,
-            });
-            Zotero.log("[Clautero] Chat UI built from scratch in onRender", "info");
-          }
-        }
-      },
-      onItemChange: ({
-        setEnabled,
-      }: {
-        item: any;
-        setEnabled: (v: boolean) => void;
-        tabType: string;
-      }) => {
-        // Always show the Clautero section
-        setEnabled(true);
-        return true;
-      },
-    });
-
-    if (registeredSectionID) {
-      Zotero.log(`[Clautero] Section registered: ${registeredSectionID}`, "info");
-    } else {
-      Zotero.log("[Clautero] registerSection returned falsy", "warning");
-    }
-  } catch (error) {
-    Zotero.log(`[Clautero] registerSection FAILED: ${error}`, "error");
-
-    // Log available API for debugging
-    try {
-      const mgr = (Zotero as any).ItemPaneManager;
-      const keys = mgr ? Object.keys(mgr).join(", ") : "null";
-      Zotero.log(`[Clautero] ItemPaneManager keys: ${keys}`, "info");
-    } catch {
-      // ignore
-    }
-  }
-
-  // Cleanup
-  return () => {
-    try {
-      if (registeredSectionID) {
-        (Zotero as any).ItemPaneManager.unregisterSection(registeredSectionID);
-      }
-    } catch {
-      // ignore
-    }
-    registeredElements = null;
-    registeredSectionID = null;
-    delete (win as any).__clauteroSidebar;
-  };
+  Zotero.log("[Clautero] Chat UI built and injected", "info");
 }
