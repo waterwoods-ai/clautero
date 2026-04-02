@@ -103,30 +103,28 @@ export function initSidebarManager(
         icon: "chrome://zotero/skin/16/universal/chat.svg",
       },
       onRender: ({ body, item }: { body: HTMLElement; item: any }) => {
-        if (!registeredElements) {
-          const doc = body.ownerDocument;
-          sectionBody = body;
+        const doc = body.ownerDocument;
+        sectionBody = body;
 
-          // Make the section body fill the entire available height
-          // (same approach as zotero-ai-tab)
-          body.style.display = "flex";
-          body.style.flexDirection = "column";
-          body.style.height = "100%";
-          body.style.overflow = "hidden";
-          body.style.padding = "0";
+        // Make the section body fill the entire available height
+        body.style.display = "flex";
+        body.style.flexDirection = "column";
+        body.style.height = "100%";
+        body.style.overflow = "hidden";
+        body.style.padding = "0";
 
-          registeredElements = buildChatUI(body, doc);
-          Zotero.log("[Clautero] Chat UI rendered in item pane section", "info");
+        // Always rebuild UI — onRender gives a new body each time
+        registeredElements = buildChatUI(body, doc);
+        Zotero.log("[Clautero] Chat UI rendered in item pane section", "info");
 
-          // Expose for hooks.ts to wire up
-          (_window as any).__clauteroSidebar = Object.freeze({
-            toggle: () => {},
-            show: () => {},
-            hide: () => {},
-            isVisible: () => true,
-            getElements: () => registeredElements,
-          });
-        }
+        // Expose for hooks.ts to wire up
+        (_window as any).__clauteroSidebar = Object.freeze({
+          toggle: () => {},
+          show: () => {},
+          hide: () => {},
+          isVisible: () => true,
+          getElements: () => registeredElements,
+        });
       },
 
       onItemChange: ({ item, setEnabled }: { item: any; setEnabled: (v: boolean) => void }) => {
