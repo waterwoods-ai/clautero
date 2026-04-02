@@ -97,43 +97,50 @@ export function initSidebarManager(
     (win as any).clearInterval(poll);
     Zotero.log(`[Clautero] Section element found after ${pollCount} polls`, "info");
 
-    // Force section visible (not hidden)
+    // Force section visible
     const sectionParent = section.closest("item-pane-custom-section") as HTMLElement;
     if (sectionParent) {
       sectionParent.hidden = false;
-      sectionParent.style.display = "";
-      Zotero.log("[Clautero] Section parent unhidden", "info");
     }
 
-    // Force collapsible section open
+    // Force open via the element's API
     try {
-      if ("open" in section) {
-        (section as any).open = true;
+      (section as any).open = true;
+    } catch { /* ignore */ }
+
+    // Override the collapsible section CSS that hides content
+    // The CSS uses max-height:0, opacity:0, visibility:hidden on :not([open]) > :not(.head)
+    // We need to ensure [open] attribute is set AND override styles on the body container
+    section.setAttribute("open", "");
+
+    // Find all non-head children and force them visible
+    const children = section.children;
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i] as HTMLElement;
+      if (!child.classList.contains("head")) {
+        child.style.maxHeight = "none";
+        child.style.opacity = "1";
+        child.style.visibility = "visible";
+        child.style.overflow = "visible";
       }
-      section.setAttribute("open", "");
-      section.toggleAttribute("open", true);
-    } catch (e) {
-      Zotero.log(`[Clautero] Could not set open: ${e}`, "warning");
     }
 
-    // Find the body and inject UI
+    // Find the body div and inject UI
     const body = section.querySelector('[data-type="body"]') as HTMLElement
-      ?? section.querySelector(".body") as HTMLElement
       ?? section.lastElementChild as HTMLElement;
 
     if (body && !body.querySelector(".clautero-chat-root")) {
       body.style.minHeight = "400px";
+      body.style.maxHeight = "none";
       body.style.overflow = "visible";
+      body.style.visibility = "visible";
+      body.style.opacity = "1";
       buildUI(body, doc, win);
-
-      // Force recalc --open-height
-      const head = section.querySelector(".head");
-      if (head && head.nextElementSibling) {
-        const h = (head.nextElementSibling as HTMLElement).scrollHeight;
-        section.style.setProperty("--open-height", h > 0 ? `${h}px` : "auto");
-        Zotero.log(`[Clautero] Set --open-height: ${h}px`, "info");
-      }
+      Zotero.log("[Clautero] UI injected, body styles forced visible", "info");
     }
+
+    // Set --open-height to auto so CSS doesn't clip
+    section.style.setProperty("--open-height", "auto");
   }, 500);
 
   return () => {
