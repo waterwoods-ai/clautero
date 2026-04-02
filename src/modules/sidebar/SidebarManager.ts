@@ -14,77 +14,76 @@ interface SidebarElements {
 }
 
 let registeredElements: SidebarElements | null = null;
-let sectionBody: HTMLElement | null = null;
 
-function buildChatUI(body: HTMLElement, doc: Document): SidebarElements {
+function findOrBuild(body: HTMLElement, win: Window): SidebarElements {
+  const doc = body.ownerDocument;
+
+  // Check if already built (body persists between renders for same item)
+  const existing = body.querySelector(".clautero-wrapper");
+  if (existing && registeredElements) {
+    return registeredElements;
+  }
+
+  // Clear body
   while (body.firstChild) {
     body.removeChild(body.firstChild);
   }
 
+  // Build all UI elements using DOM APIs (never innerHTML)
   const wrapper = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-  wrapper.setAttribute("style",
-    "display:flex;flex-direction:column;height:100%;width:100%;" +
-    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;" +
-    "flex-grow:1;overflow:hidden;"
-  );
+  wrapper.className = "clautero-wrapper";
+  wrapper.style.cssText = "display:flex;flex-direction:column;width:100%;min-height:400px;" +
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;";
 
+  // Message area
   const messageArea = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-  messageArea.setAttribute("class", "clautero-messages");
-  messageArea.setAttribute("style",
-    "flex-grow:1;overflow-y:auto;padding:8px 10px;min-height:100px;"
-  );
+  messageArea.className = "clautero-messages";
+  messageArea.style.cssText = "flex:1;overflow-y:auto;padding:8px 10px;min-height:200px;";
 
+  // Welcome text
+  const welcome = doc.createElementNS(XHTML_NS, "p") as HTMLElement;
+  welcome.style.cssText = "color:#888;font-style:italic;margin:20px 0;text-align:center;";
+  welcome.textContent = "Ask Claude about your research...";
+  messageArea.appendChild(welcome);
+
+  // Context bar
   const contextBar = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-  contextBar.setAttribute("class", "clautero-context-bar");
+  contextBar.className = "clautero-context-bar";
+  contextBar.style.cssText = "padding:0 8px;";
 
+  // Input area
   const inputArea = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-  inputArea.setAttribute("style",
-    "display:flex;gap:4px;padding:8px;border-top:1px solid #ccc;"
-  );
+  inputArea.style.cssText = "display:flex;gap:6px;padding:8px;border-top:1px solid #ddd;";
 
   const textarea = doc.createElementNS(XHTML_NS, "textarea") as HTMLTextAreaElement;
-  textarea.setAttribute("placeholder", "Ask Claude about your research\u2026");
-  textarea.setAttribute("rows", "3");
-  textarea.setAttribute("style",
-    "flex:1;resize:none;border:1px solid #ccc;border-radius:4px;padding:6px;font-size:13px;" +
-    "font-family:inherit;background:var(--material-background,#fff);color:var(--fill-primary,#1a1a1a);"
-  );
+  textarea.placeholder = "Type a message...";
+  textarea.rows = 3;
+  textarea.style.cssText = "flex:1;resize:none;border:1px solid #ccc;border-radius:6px;padding:8px;" +
+    "font-size:13px;font-family:inherit;outline:none;";
 
   const sendButton = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
-  sendButton.setAttribute("style",
-    "padding:6px 12px;border:none;border-radius:4px;cursor:pointer;" +
-    "background:#3584e4;color:white;font-size:13px;font-weight:600;align-self:flex-end;"
-  );
+  sendButton.style.cssText = "padding:8px 16px;border:none;border-radius:6px;cursor:pointer;" +
+    "background:#3584e4;color:white;font-size:13px;font-weight:600;align-self:flex-end;";
   sendButton.textContent = "Send";
 
   inputArea.appendChild(textarea);
   inputArea.appendChild(sendButton);
+
   wrapper.appendChild(messageArea);
   wrapper.appendChild(contextBar);
   wrapper.appendChild(inputArea);
   body.appendChild(wrapper);
 
-  return Object.freeze({
+  registeredElements = Object.freeze({
     messageArea,
     contextBar,
-    textarea: textarea as HTMLTextAreaElement,
+    textarea,
     sendButton,
   });
-}
 
-function renderUI(body: HTMLElement, win: Window): void {
-  const doc = body.ownerDocument;
-  sectionBody = body;
-
-  body.style.display = "flex";
-  body.style.flexDirection = "column";
-  body.style.height = "100%";
-  body.style.overflow = "hidden";
-  body.style.padding = "0";
-
-  registeredElements = buildChatUI(body, doc);
   Zotero.log("[Clautero] Chat UI built", "info");
 
+  // Expose for hooks.ts
   (win as any).__clauteroSidebar = Object.freeze({
     toggle: () => {},
     show: () => {},
@@ -92,6 +91,8 @@ function renderUI(body: HTMLElement, win: Window): void {
     isVisible: () => true,
     getElements: () => registeredElements,
   });
+
+  return registeredElements;
 }
 
 export function initSidebarManager(
@@ -99,34 +100,9 @@ export function initSidebarManager(
   _rootURI: string
 ): () => void {
   try {
-    // Inject a Fluent FTL string directly into the document so l10nID resolves
-    const ftlContent = "clautero-sidebar-title = Clautero";
-    const ftlUri = "data:text/plain," + encodeURIComponent(ftlContent);
-
-    // Try to add to L10nRegistry if available
+    // Load FTL before registration
     try {
-      const { L10nRegistry, FileSource } = ChromeUtils.importESModule(
-        "resource://gre/modules/L10nRegistry.sys.mjs"
-      );
-      const source = new FileSource(
-        "clautero",
-        ["en-US"],
-        "data:text/plain,",
-      );
-      // Override generateMessages to return our string
-      L10nRegistry.getInstance().registerSources([source]);
-    } catch (e) {
-      Zotero.log(`[Clautero] L10nRegistry not available: ${e}`, "warning");
-    }
-
-    // Also try insertFTLIfNeeded on main windows
-    try {
-      const wins = Zotero.getMainWindows();
-      for (const w of wins) {
-        if (w && !w.closed && (w as any).MozXULElement) {
-          (w as any).MozXULElement.insertFTLIfNeeded("addon.ftl");
-        }
-      }
+      _window.MozXULElement.insertFTLIfNeeded("addon.ftl");
     } catch {
       // ignore
     }
@@ -144,17 +120,32 @@ export function initSidebarManager(
         l10nID: "clautero-sidebar-title",
         icon: chatIcon,
       },
-      onInit: ({ body }: { body: HTMLElement }) => {
-        Zotero.log("[Clautero] onInit called", "info");
-        renderUI(body, _window);
+      onRender: ({
+        body,
+        item,
+        setEnabled,
+      }: {
+        body: HTMLElement;
+        item: any;
+        setEnabled?: (v: boolean) => void;
+      }) => {
+        Zotero.log(`[Clautero] onRender called, body.childElementCount=${body.childElementCount}`, "info");
+
+        // Style the body container
+        body.style.display = "flex";
+        body.style.flexDirection = "column";
+        body.style.overflow = "hidden";
+        body.style.padding = "0";
+
+        findOrBuild(body, _window);
       },
-      onRender: ({ body }: { body: HTMLElement }) => {
-        Zotero.log("[Clautero] onRender called", "info");
-        if (body.children.length === 0) {
-          renderUI(body, _window);
-        }
-      },
-      onItemChange: ({ setEnabled }: { setEnabled: (v: boolean) => void }) => {
+      onItemChange: ({
+        setEnabled,
+      }: {
+        item: any;
+        setEnabled: (v: boolean) => void;
+        tabType: string;
+      }) => {
         setEnabled(true);
         return true;
       },
@@ -171,7 +162,6 @@ export function initSidebarManager(
       // ignore
     }
     registeredElements = null;
-    sectionBody = null;
     delete (_window as any).__clauteroSidebar;
   };
 }
