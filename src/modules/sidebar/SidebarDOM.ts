@@ -151,51 +151,66 @@ export function createSidebarDOM(
   htmlWrapper.appendChild(inputArea);
   container.appendChild(htmlWrapper);
 
-  // Debug: dump direct children of #main-window to find the layout container
-  const mainWindow = doc.getElementById("main-window") ?? doc.documentElement;
-  const childInfo = Array.from(mainWindow.children)
-    .map((c, i) => `${i}:${c.tagName}#${c.id || ""}`)
-    .join(", ");
-  Zotero.log(`[Clautero] #main-window children: ${childInfo}`, "info");
+  // Find the Zotero 3-pane layout. We need the element whose direct children
+  // are the library tree, items list, and item pane arranged horizontally.
+  //
+  // Strategy: look for known Zotero layout IDs, then search for splitter siblings.
+  const doc2 = doc;
 
-  // Find the right horizontal container. Walk through #main-window children
-  // looking for hbox, or a vbox/deck that contains the main content.
-  // Then drill into it to find the horizontal layout with the 3 panes.
+  // Dump ALL elements with IDs that could be layout-related (safe string check)
+  const allIds: string[] = [];
+  const allEls = doc2.querySelectorAll("*");
+  for (let i = 0; i < Math.min(allEls.length, 500); i++) {
+    const el = allEls[i];
+    const id = el.getAttribute("id");
+    if (id) {
+      allIds.push(`${el.tagName}#${id}`);
+    }
+  }
+  Zotero.log(`[Clautero] All IDs (first 60): ${allIds.slice(0, 60).join(", ")}`, "info");
+
+  // Try known container IDs
+  const containerIds = [
+    "zotero-main-layout",
+    "zotero-layout",
+    "zotero-pane",
+    "zotero-main-pane",
+  ];
+
   let target: Element | null = null;
 
-  // Look for hbox direct children of main-window
-  for (const child of Array.from(mainWindow.children)) {
-    if (child.tagName.toLowerCase() === "hbox") {
-      target = child;
+  for (const cid of containerIds) {
+    const el = doc2.getElementById(cid);
+    if (el) {
+      target = el;
+      Zotero.log(`[Clautero] Found layout container: #${cid}`, "info");
       break;
     }
   }
 
-  // If no hbox at top level, look for the deepest vbox/deck that has an hbox child
+  // If no known container, find the splitter that divides the items list from item pane
+  // and use its parent
   if (!target) {
-    for (const child of Array.from(mainWindow.children)) {
-      const hbox = child.querySelector("hbox");
-      if (hbox) {
-        // Log what we found for debugging
-        const hboxChildren = Array.from(hbox.children)
-          .map((c, i) => `${i}:${c.tagName}#${c.id || ""}`)
-          .join(", ");
-        Zotero.log(`[Clautero] Found hbox in ${child.tagName}#${child.id || ""}, children: ${hboxChildren}`, "info");
-        target = hbox;
+    const allSplitters = doc2.querySelectorAll("splitter");
+    for (const sp of Array.from(allSplitters)) {
+      const parent = sp.parentElement;
+      if (parent && parent.children.length >= 3) {
+        target = parent;
+        Zotero.log(`[Clautero] Found layout via splitter parent: ${parent.tagName}#${parent.getAttribute("id") || ""}`, "info");
         break;
       }
     }
   }
 
-  if (target) {
-    target.appendChild(splitter);
-    target.appendChild(container);
-    Zotero.log(`[Clautero] Sidebar appended to ${target.tagName}#${target.id || ""}`, "info");
-  } else {
-    mainWindow.appendChild(splitter);
-    mainWindow.appendChild(container);
-    Zotero.log("[Clautero] Sidebar appended to #main-window (no hbox found)", "warning");
+  // Last resort: use #main-window directly
+  if (!target) {
+    target = doc2.getElementById("main-window") ?? doc2.documentElement;
+    Zotero.log("[Clautero] Using #main-window as fallback", "warning");
   }
+
+  target.appendChild(splitter);
+  target.appendChild(container);
+  Zotero.log(`[Clautero] Sidebar appended to ${target.tagName}#${target.getAttribute("id") || ""}`, "info");
 
   const elements: SidebarElements = Object.freeze({
     splitter,

@@ -6,7 +6,24 @@
  * or textContent/createTextNode.
  */
 
-import DOMPurify from "dompurify";
+// DOMPurify import — esbuild bundles this, but the default export may
+// not resolve correctly in Gecko's IIFE. We import it and try both shapes.
+import DOMPurifyModule from "dompurify";
+
+const purify: { sanitize: (html: string, opts?: any) => string } | null = (() => {
+  try {
+    const mod = DOMPurifyModule as any;
+    if (typeof mod.sanitize === "function") {
+      return mod;
+    }
+    if (mod.default && typeof mod.default.sanitize === "function") {
+      return mod.default;
+    }
+  } catch {
+    // not available
+  }
+  return null;
+})();
 
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
@@ -30,20 +47,29 @@ function sanitizeAndAppendHtml(
   parent: HTMLElement,
   html: string
 ): void {
-  const doc = parent.ownerDocument;
-  const clean = DOMPurify.sanitize(html, {
-    RETURN_DOM_FRAGMENT: false,
-    RETURN_DOM: false,
-  });
-  const parser = new DOMParser();
-  const parsed = parser.parseFromString(
-    `<div xmlns="${XHTML_NS}">${clean}</div>`,
-    "application/xhtml+xml"
-  );
-  const root = parsed.documentElement;
-  while (root.firstChild) {
-    parent.appendChild(doc.adoptNode(root.firstChild));
+  if (purify && typeof purify.sanitize === "function") {
+    const doc = parent.ownerDocument;
+    const clean = purify.sanitize(html, {
+      RETURN_DOM_FRAGMENT: false,
+      RETURN_DOM: false,
+    });
+    try {
+      const parser = new DOMParser();
+      const parsed = parser.parseFromString(
+        `<div xmlns="${XHTML_NS}">${clean}</div>`,
+        "application/xhtml+xml"
+      );
+      const root = parsed.documentElement;
+      while (root.firstChild) {
+        parent.appendChild(doc.adoptNode(root.firstChild));
+      }
+      return;
+    } catch {
+      // DOMParser failed, fall through to textContent
+    }
   }
+  // Safe fallback: just use textContent (no HTML rendering but secure)
+  appendTextNode(parent, html);
 }
 
 function isScrolledToBottom(el: HTMLElement): boolean {
