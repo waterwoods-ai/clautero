@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE window>
+<vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+      xmlns:html="http://www.w3.org/1999/xhtml">
+  <groupbox>
+    <label><html:h2 data-l10n-id="clautero-prefs-title" /></label>
+
+    <hbox align="center">
+      <label data-l10n-id="clautero-prefs-claude-cli-path" />
+      <html:input type="text" id="clautero-prefs-cli-path"
+                  preference="extensions.clautero.claudeCliPath"
+                  style="flex: 1;" />
+    </hbox>
+    <description data-l10n-id="clautero-prefs-claude-cli-path-desc" />
+
+    <checkbox id="clautero-prefs-auto-attach"
+              data-l10n-id="clautero-prefs-auto-attach"
+              preference="extensions.clautero.autoAttachContext" />
+
+    <hbox align="center">
+      <label data-l10n-id="clautero-prefs-sidebar-width" />
+      <html:input type="number" id="clautero-prefs-sidebar-width"
+                  preference="extensions.clautero.sidebarWidth"
+                  min="200" max="800" />
+    </hbox>
+
+    <hbox align="center">
+      <label data-l10n-id="clautero-prefs-max-context" />
+      <html:input type="number" id="clautero-prefs-max-context"
+                  preference="extensions.clautero.maxContextLength"
+                  min="1000" max="200000" />
+    </hbox>
+  </groupbox>
+</vbox>

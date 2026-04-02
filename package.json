@@ -1,0 +1,22 @@
+{
+  "name": "clautero",
+  "version": "0.1.0",
+  "description": "A Zotero plugin that embeds Claude Code as a sidebar AI research assistant",
+  "scripts": {
+    "start": "zotero-plugin serve",
+    "build": "tsc --noEmit && zotero-plugin build",
+    "release": "zotero-plugin release",
+    "lint": "eslint src --ext .ts"
+  },
+  "author": "tom",
+  "license": "MIT",
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "typescript": "^5.7.0",
+    "zotero-plugin-scaffold": "^0.8.0",
+    "zotero-types": "^2.2.0"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.0"
+  }
+}
