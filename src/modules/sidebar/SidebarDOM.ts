@@ -151,74 +151,18 @@ export function createSidebarDOM(
   htmlWrapper.appendChild(inputArea);
   container.appendChild(htmlWrapper);
 
-  // Debug: dump layout-relevant elements
-  const layoutEls = Array.from(doc.querySelectorAll("[id]"))
-    .filter(el => {
-      const tag = el.tagName.toLowerCase();
-      const id = el.id.toLowerCase();
-      return tag === "hbox" || tag === "vbox" || tag === "deck"
-        || id.includes("pane") || id.includes("layout")
-        || id.includes("content") || id.includes("zotero-tb");
-    })
-    .slice(0, 40)
-    .map(el => `${el.tagName}#${el.id}`)
-    .join(", ");
-  Zotero.log(`[Clautero] DOM layout elements: ${layoutEls}`, "info");
+  // Inject into the main-window (#main-window is the root XUL element in Zotero).
+  // We append the splitter + sidebar as direct children of #main-window.
+  // Since #main-window is typically a horizontal layout, this places us on the right.
+  // If the layout is vertical, we force horizontal via CSS flex on #main-window.
+  const mainWindow = doc.getElementById("main-window") ?? doc.documentElement;
 
-  // Find the main content hbox that contains the library/items/detail panes.
-  // Search for an hbox that contains splitters (the column dividers).
-  let injected = false;
-
-  // Strategy 1: find by known pane IDs
-  const paneIds = [
-    "zotero-item-pane", "item-pane", "zotero-items-pane",
-    "zotero-context-pane", "zotero-view-item",
-  ];
-  for (const id of paneIds) {
-    const pane = doc.getElementById(id);
-    if (pane && pane.parentElement) {
-      pane.parentElement.appendChild(splitter);
-      pane.parentElement.appendChild(container);
-      injected = true;
-      Zotero.log(`[Clautero] Sidebar injected after #${id} in ${pane.parentElement.tagName}#${pane.parentElement.id || ""}`, "info");
-      break;
-    }
-  }
-
-  // Strategy 2: find hbox containing splitters (the main 3-column layout)
-  if (!injected) {
-    const hboxes = doc.querySelectorAll("hbox");
-    for (const hbox of Array.from(hboxes)) {
-      const splitters = hbox.querySelectorAll(":scope > splitter");
-      if (splitters.length >= 1 && hbox.children.length >= 3) {
-        hbox.appendChild(splitter);
-        hbox.appendChild(container);
-        injected = true;
-        Zotero.log(`[Clautero] Sidebar injected into hbox#${hbox.id || ""} (${splitters.length} splitters, ${hbox.children.length} children)`, "info");
-        break;
-      }
-    }
-  }
-
-  // Strategy 3: append to the main-window's first hbox child
-  if (!injected) {
-    const mainWin = doc.getElementById("main-window");
-    if (mainWin) {
-      const firstHbox = mainWin.querySelector("hbox");
-      if (firstHbox) {
-        firstHbox.appendChild(splitter);
-        firstHbox.appendChild(container);
-        injected = true;
-        Zotero.log(`[Clautero] Sidebar injected into main-window > hbox`, "info");
-      }
-    }
-  }
-
-  if (!injected) {
-    doc.documentElement.appendChild(splitter);
-    doc.documentElement.appendChild(container);
-    Zotero.log("[Clautero] Sidebar injected into document root (fallback)", "warning");
-  }
+  mainWindow.appendChild(splitter);
+  mainWindow.appendChild(container);
+  Zotero.log(
+    `[Clautero] Sidebar appended to ${mainWindow.tagName}#${mainWindow.id || "root"}`,
+    "info"
+  );
 
   const elements: SidebarElements = Object.freeze({
     splitter,

@@ -21,8 +21,11 @@
 #clautero-sidebar {
   min-width: 280px;
   max-width: 800px;
+  height: 100%;
   overflow: hidden;
   border-inline-start: 1px solid var(--material-border, #ccc);
+  /* Force the sidebar to not shrink and stay at its width */
+  flex-shrink: 0;
 }
 
 /* XHTML wrapper inside XUL vbox — carries all visual styles.
