@@ -288,19 +288,40 @@ export function createTabManager(options: TabManagerOptions) {
 
     const service = initTabService(tab);
 
-    if (service.getState() !== "active") {
-      if (tab.claudeSessionId) {
-        await service.resumeSession(tab.claudeSessionId);
-      } else {
-        await service.startSession();
+    try {
+      if (service.getState() !== "active") {
+        Zotero.log("[Clautero] Starting Claude session...", "info");
+        if (tab.claudeSessionId) {
+          await service.resumeSession(tab.claudeSessionId);
+        } else {
+          await service.startSession();
+        }
+        Zotero.log("[Clautero] Session started, state: " + service.getState(), "info");
       }
+    } catch (startError) {
+      const errMsg = startError instanceof Error ? startError.message : String(startError);
+      Zotero.log(`[Clautero] Failed to start session: ${errMsg}`, "error");
+      // Show error in chat UI
+      tab.renderer?.appendTextChunk(`Error: Could not start Claude. ${errMsg}`);
+      tab.renderer?.finishAssistantMessage();
+      options.onInputDisable(false);
+      return;
     }
 
     options.onInputDisable(true);
     tab.streamController?.startStream();
 
-    const messageWithContext = context ? `${context}\n\n${text}` : text;
-    service.sendMessage(messageWithContext);
+    try {
+      const messageWithContext = context ? `${context}\n\n${text}` : text;
+      service.sendMessage(messageWithContext);
+    } catch (sendError) {
+      const errMsg = sendError instanceof Error ? sendError.message : String(sendError);
+      Zotero.log(`[Clautero] Failed to send message: ${errMsg}`, "error");
+      tab.renderer?.appendTextChunk(`Error: ${errMsg}`);
+      tab.renderer?.finishAssistantMessage();
+      options.onInputDisable(false);
+      return;
+    }
     tab.updatedAt = Date.now();
   }
 

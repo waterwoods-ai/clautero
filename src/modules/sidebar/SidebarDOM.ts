@@ -151,39 +151,57 @@ export function createSidebarDOM(
   htmlWrapper.appendChild(inputArea);
   container.appendChild(htmlWrapper);
 
-  // Debug: log available top-level elements to find the right injection point
-  const debugIds = Array.from(doc.querySelectorAll("[id]"))
-    .slice(0, 30)
-    .map(el => `${el.tagName}#${el.id}`)
-    .join(", ");
-  Zotero.log(`[Clautero] DOM debug - top elements: ${debugIds}`, "info");
+  // Strategy: find the item pane (right panel showing item details) and inject
+  // our sidebar AFTER it in its parent hbox. This places us on the far right.
+  //
+  // Zotero layout: hbox > [library-tree | splitter | items-list | splitter | item-pane]
+  // We want:       hbox > [library-tree | splitter | items-list | splitter | item-pane | OUR-splitter | OUR-sidebar]
 
-  // Find injection point: Zotero 7's main horizontal layout
-  // Try multiple selectors for robustness across Zotero versions
-  const mainLayout = doc.getElementById("zotero-main-layout")
-    ?? doc.getElementById("main-window")?.querySelector("hbox")
-    ?? doc.querySelector("#zotero-pane hbox")
-    ?? doc.querySelector("#browser-border-start")?.parentElement
-    ?? doc.querySelector("hbox[flex]")
-    ?? doc.querySelector("#main-window hbox")
-    ?? doc.querySelector("hbox");
+  const itemPane = doc.getElementById("zotero-item-pane")
+    ?? doc.getElementById("item-pane")
+    ?? doc.getElementById("zotero-items-pane");
 
-  if (!mainLayout) {
-    // Fallback: append to the document's main element
-    const fallback = doc.documentElement;
+  let injected = false;
+
+  if (itemPane && itemPane.parentElement) {
+    const parent = itemPane.parentElement;
+    // Insert after the item pane
+    if (itemPane.nextSibling) {
+      parent.insertBefore(splitter, itemPane.nextSibling);
+      parent.insertBefore(container, splitter.nextSibling);
+    } else {
+      parent.appendChild(splitter);
+      parent.appendChild(container);
+    }
+    injected = true;
     Zotero.log(
-      "[Clautero] Could not find main layout, appending to document root",
-      "warning"
-    );
-    fallback.appendChild(splitter);
-    fallback.appendChild(container);
-  } else {
-    mainLayout.appendChild(splitter);
-    mainLayout.appendChild(container);
-    Zotero.log(
-      `[Clautero] Sidebar injected into: ${mainLayout.id || mainLayout.tagName} (tag: ${mainLayout.tagName})`,
+      `[Clautero] Sidebar injected after: ${itemPane.id} in ${parent.tagName}#${parent.id || ""}`,
       "info"
     );
+  }
+
+  if (!injected) {
+    // Fallback: find any hbox that contains multiple children (likely the main layout)
+    const hboxes = doc.querySelectorAll("hbox");
+    for (const hbox of Array.from(hboxes)) {
+      if (hbox.children.length >= 3) {
+        hbox.appendChild(splitter);
+        hbox.appendChild(container);
+        injected = true;
+        Zotero.log(
+          `[Clautero] Sidebar injected into hbox#${hbox.id || ""} with ${hbox.children.length} children`,
+          "info"
+        );
+        break;
+      }
+    }
+  }
+
+  if (!injected) {
+    // Last resort: append to document root
+    doc.documentElement.appendChild(splitter);
+    doc.documentElement.appendChild(container);
+    Zotero.log("[Clautero] Sidebar injected into document root (fallback)", "warning");
   }
 
   const elements: SidebarElements = Object.freeze({

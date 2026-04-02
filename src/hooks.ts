@@ -13,8 +13,12 @@ export interface Hooks {
 }
 
 function resolveCliPath(): string {
-  const pref = Zotero.Prefs.get("extensions.clautero.cliPath", true) as string;
-  return pref || "claude";
+  try {
+    const pref = Zotero.Prefs.get("extensions.clautero.claudeCliPath", true) as string;
+    return pref || "claude";
+  } catch {
+    return "claude";
+  }
 }
 
 function isAutoAttachEnabled(): boolean {
