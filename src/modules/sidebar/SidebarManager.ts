@@ -1,12 +1,15 @@
 /**
- * SidebarManager — Creates a floating chat panel (like zotero-gpt).
+ * SidebarManager — Adds a persistent icon to Zotero's sidenav and
+ * shows a right-side panel (like Claudian) when clicked.
  *
- * Instead of fighting with ItemPaneManager's collapsible sections,
- * we create a fixed-position panel appended to document.documentElement.
- * Toggled via keyboard shortcut (Cmd+Shift+C) and toolbar button.
+ * Approach:
+ * 1. Inject a button into the item-pane-sidenav element (always visible)
+ * 2. Create a side panel as a sibling to the existing item pane
+ * 3. Toggle panel visibility on button click
  */
 
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
+const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 
 interface SidebarElements {
   readonly messageArea: HTMLElement;
@@ -17,7 +20,14 @@ interface SidebarElements {
 
 let registeredElements: SidebarElements | null = null;
 
-function el(doc: Document, tag: string, style: string, cls?: string): HTMLElement {
+function createXUL(doc: Document, tag: string): Element {
+  if ("createXULElement" in doc) {
+    return (doc as any).createXULElement(tag);
+  }
+  return doc.createElementNS(XUL_NS, tag);
+}
+
+function htmlEl(doc: Document, tag: string, style: string, cls?: string): HTMLElement {
   const e = doc.createElementNS(XHTML_NS, tag) as HTMLElement;
   e.style.cssText = style;
   if (cls) e.className = cls;
@@ -26,68 +36,65 @@ function el(doc: Document, tag: string, style: string, cls?: string): HTMLElemen
 
 export function initSidebarManager(
   win: Window,
-  _rootURI: string
+  rootURI: string
 ): () => void {
   const doc = win.document;
-  let visible = false;
+  let panelVisible = false;
+  let panel: Element | null = null;
+  let sidenavBtn: HTMLElement | null = null;
+  const cleanups: Array<() => void> = [];
 
-  // ── Build floating panel ──
-  const panel = el(doc, "div", `
-    display: none;
-    position: fixed;
-    top: 60px;
-    right: 20px;
-    width: 420px;
-    height: 70vh;
-    max-height: 800px;
-    min-height: 300px;
-    background: #ffffff;
-    border: 1px solid #d0d0d0;
-    border-radius: 10px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.15);
-    z-index: 10000;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 13px;
-    overflow: hidden;
-    flex-direction: column;
-  `, "clautero-panel");
+  // ── Step 1: Create the side panel (hidden initially) ──
+  // This is a XUL vbox that sits alongside the item pane
+  const splitter = createXUL(doc, "splitter");
+  splitter.setAttribute("id", "clautero-splitter");
+  splitter.setAttribute("resizebefore", "closest");
+  splitter.setAttribute("resizeafter", "closest");
+  splitter.setAttribute("style", "border:none;min-width:4px;max-width:6px;background:#d0d0d0;cursor:col-resize;");
+
+  const container = createXUL(doc, "vbox");
+  container.setAttribute("id", "clautero-sidebar");
+  container.setAttribute("width", "400");
+  container.setAttribute("style", "min-width:280px;max-width:800px;border-inline-start:1px solid #ccc;display:none;");
+
+  // XHTML wrapper for chat UI
+  const wrapper = htmlEl(doc, "div", `
+    display:flex;flex-direction:column;height:100%;width:100%;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;
+    background:#fff;color:#1a1a1a;
+  `);
 
   // Header
-  const header = el(doc, "div", `
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 14px; border-bottom: 1px solid #e0e0e0;
-    background: #f8f8f8; border-radius: 10px 10px 0 0;
-    cursor: move; user-select: none;
+  const header = htmlEl(doc, "div", `
+    display:flex;align-items:center;justify-content:space-between;
+    padding:8px 12px;border-bottom:1px solid #e0e0e0;
+    background:#f8f8f8;flex-shrink:0;
   `);
-  const title = el(doc, "span", "font-weight:600;font-size:14px;color:#333;");
-  title.textContent = "Clautero";
-  const closeBtn = el(doc, "button", `
-    background:none; border:none; font-size:18px; cursor:pointer;
-    color:#666; padding:2px 6px; border-radius:4px; line-height:1;
+  const titleEl = htmlEl(doc, "span", "font-weight:600;font-size:14px;color:#333;");
+  titleEl.textContent = "Clautero";
+  const closeBtn = htmlEl(doc, "button", `
+    background:none;border:none;font-size:18px;cursor:pointer;
+    color:#666;padding:2px 6px;border-radius:4px;line-height:1;
   `);
   closeBtn.textContent = "\u00D7";
-  closeBtn.addEventListener("click", () => toggle());
-  header.appendChild(title);
+  closeBtn.addEventListener("click", () => togglePanel());
+  header.appendChild(titleEl);
   header.appendChild(closeBtn);
 
   // Message area
-  const messageArea = el(doc, "div",
-    "flex:1;overflow-y:auto;padding:10px 12px;min-height:100px;",
+  const messageArea = htmlEl(doc, "div",
+    "flex:1;overflow-y:auto;padding:10px 12px;",
     "clautero-messages"
   );
-  const welcome = el(doc, "p",
-    "color:#999;font-style:italic;text-align:center;margin:40px 0;"
-  );
+  const welcome = htmlEl(doc, "p", "color:#999;font-style:italic;text-align:center;margin:40px 0;");
   welcome.textContent = "Ask Claude about your research...";
   messageArea.appendChild(welcome);
 
   // Context bar
-  const contextBar = el(doc, "div", "padding:0 10px;", "clautero-context-bar");
+  const contextBar = htmlEl(doc, "div", "padding:0 10px;", "clautero-context-bar");
 
   // Input area
-  const inputArea = el(doc, "div",
-    "display:flex;gap:6px;padding:10px 12px;border-top:1px solid #e0e0e0;"
-  );
+  const inputArea = htmlEl(doc, "div", "display:flex;gap:6px;padding:10px 12px;border-top:1px solid #e0e0e0;");
   const textarea = doc.createElementNS(XHTML_NS, "textarea") as HTMLTextAreaElement;
   textarea.placeholder = "Type a message...";
   textarea.rows = 3;
@@ -95,7 +102,7 @@ export function initSidebarManager(
     flex:1;resize:none;border:1px solid #d0d0d0;border-radius:8px;padding:8px 10px;
     font-size:13px;font-family:inherit;outline:none;background:#fff;color:#333;
   `;
-  const sendButton = el(doc, "button", `
+  const sendButton = htmlEl(doc, "button", `
     padding:8px 16px;border:none;border-radius:8px;cursor:pointer;
     background:#3584e4;color:white;font-size:13px;font-weight:600;align-self:flex-end;
   `);
@@ -103,103 +110,135 @@ export function initSidebarManager(
   inputArea.appendChild(textarea);
   inputArea.appendChild(sendButton);
 
-  // Assemble panel
-  panel.appendChild(header);
-  panel.appendChild(messageArea);
-  panel.appendChild(contextBar);
-  panel.appendChild(inputArea);
+  wrapper.appendChild(header);
+  wrapper.appendChild(messageArea);
+  wrapper.appendChild(contextBar);
+  wrapper.appendChild(inputArea);
+  container.appendChild(wrapper);
 
-  // Make panel draggable via header
-  let dragX = 0, dragY = 0;
-  header.addEventListener("mousedown", (e: Event) => {
-    const me = e as MouseEvent;
-    dragX = me.clientX - panel.offsetLeft;
-    dragY = me.clientY - panel.offsetTop;
-    const onMove = (ev: Event) => {
-      const mv = ev as MouseEvent;
-      panel.style.left = (mv.clientX - dragX) + "px";
-      panel.style.top = (mv.clientY - dragY) + "px";
-      panel.style.right = "auto";
-    };
-    const onUp = () => {
-      doc.removeEventListener("mousemove", onMove);
-      doc.removeEventListener("mouseup", onUp);
-    };
-    doc.addEventListener("mousemove", onMove);
-    doc.addEventListener("mouseup", onUp);
-  });
+  panel = container;
+  registeredElements = Object.freeze({ messageArea, contextBar, textarea, sendButton });
 
-  // Inject into document
-  doc.documentElement.appendChild(panel);
+  // ── Step 2: Inject panel into the DOM ──
+  // Append to #main-window — it will appear on the far right
+  const mainWindow = doc.getElementById("main-window");
+  if (mainWindow) {
+    mainWindow.appendChild(splitter);
+    mainWindow.appendChild(container);
+    Zotero.log("[Clautero] Panel injected into #main-window", "info");
+  }
+
+  // ── Step 3: Inject button into sidenav ──
+  function injectSidenavButton(): void {
+    // Find the sidenav element
+    const sidenav = doc.querySelector("item-pane-sidenav") as HTMLElement
+      ?? doc.querySelector("[class*='sidenav']") as HTMLElement;
+
+    if (!sidenav) {
+      Zotero.log("[Clautero] Sidenav not found, will retry", "info");
+      return;
+    }
+
+    // Don't add duplicate
+    if (doc.getElementById("clautero-sidenav-btn")) {
+      return;
+    }
+
+    // Create a button matching sidenav style
+    const btn = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+    btn.id = "clautero-sidenav-btn";
+    btn.className = "btn";
+    btn.setAttribute("title", "Clautero Chat");
+    btn.style.cssText = `
+      width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+      cursor:pointer;border-radius:4px;margin:2px 0;
+    `;
+
+    // Chat icon SVG
+    const icon = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", "0 0 16 16");
+    icon.setAttribute("width", "16");
+    icon.setAttribute("height", "16");
+    const path = doc.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("fill", "#666");
+    path.setAttribute("d", "M8 1C4.1 1 1 3.6 1 7c0 1.8 1 3.4 2.5 4.5L3 14l3-1.8c.6.2 1.3.3 2 .3 3.9 0 7-2.6 7-6S11.9 1 8 1z");
+    icon.appendChild(path);
+    btn.appendChild(icon);
+
+    btn.addEventListener("click", () => togglePanel());
+
+    // Find the button container inside sidenav
+    const btnContainer = sidenav.querySelector(".inherit-flex")
+      ?? sidenav.shadowRoot?.querySelector(".inherit-flex")
+      ?? sidenav;
+
+    btnContainer.appendChild(btn);
+    sidenavBtn = btn;
+    Zotero.log("[Clautero] Sidenav button injected", "info");
+  }
+
+  // Poll for sidenav (it may not exist immediately)
+  let pollCount = 0;
+  const pollTimer = (win as any).setInterval(() => {
+    pollCount++;
+    if (pollCount > 60) {
+      (win as any).clearInterval(pollTimer);
+      return;
+    }
+    if (!doc.getElementById("clautero-sidenav-btn")) {
+      injectSidenavButton();
+    } else {
+      (win as any).clearInterval(pollTimer);
+    }
+  }, 500);
+  cleanups.push(() => (win as any).clearInterval(pollTimer));
 
   // ── Toggle logic ──
-  function toggle() {
-    visible = !visible;
-    panel.style.display = visible ? "flex" : "none";
-    if (visible) {
+  function togglePanel(): void {
+    panelVisible = !panelVisible;
+    const display = panelVisible ? "" : "none";
+    container.setAttribute("style", container.getAttribute("style")!.replace(/display:[^;]+;?/, `display:${display};`));
+    splitter.setAttribute("style", splitter.getAttribute("style")!.replace(/display:[^;]+;?/, "") + (panelVisible ? "" : "display:none;"));
+
+    if (panelVisible) {
       textarea.focus();
     }
-  }
 
-  function show() {
-    if (!visible) toggle();
-  }
-
-  function hide() {
-    if (visible) toggle();
+    // Highlight active button
+    if (sidenavBtn) {
+      sidenavBtn.style.background = panelVisible ? "rgba(0,0,0,0.08)" : "";
+    }
   }
 
   // ── Keyboard shortcut: Cmd+Shift+C ──
   const keyHandler = (e: Event) => {
     const ke = e as KeyboardEvent;
-    const isMac = navigator.platform.includes("Mac");
-    const mod = isMac ? ke.metaKey : ke.ctrlKey;
+    const mod = navigator.platform.includes("Mac") ? ke.metaKey : ke.ctrlKey;
     if (mod && ke.shiftKey && ke.key === "C") {
       ke.preventDefault();
-      ke.stopPropagation();
-      toggle();
+      togglePanel();
     }
   };
   win.addEventListener("keydown", keyHandler, true);
-
-  // ── Tools menu item ──
-  let menuItem: Element | null = null;
-  try {
-    const createXUL = "createXULElement" in doc
-      ? (t: string) => (doc as any).createXULElement(t)
-      : (t: string) => doc.createElementNS("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul", t);
-
-    const mi = createXUL("menuitem");
-    mi.setAttribute("id", "clautero-menu-item");
-    mi.setAttribute("label", "Clautero Chat (Cmd+Shift+C)");
-    mi.addEventListener("command", () => toggle());
-    menuItem = mi;
-
-    const toolsMenu = doc.getElementById("menu_ToolsPopup");
-    if (toolsMenu) {
-      toolsMenu.appendChild(mi);
-    }
-  } catch { /* ignore */ }
+  cleanups.push(() => win.removeEventListener("keydown", keyHandler, true));
 
   // Expose API
-  registeredElements = Object.freeze({ messageArea, contextBar, textarea, sendButton });
-
   (win as any).__clauteroSidebar = Object.freeze({
-    toggle, show, hide,
-    isVisible: () => visible,
+    toggle: togglePanel,
+    show: () => { if (!panelVisible) togglePanel(); },
+    hide: () => { if (panelVisible) togglePanel(); },
+    isVisible: () => panelVisible,
     getElements: () => registeredElements,
   });
 
-  Zotero.log("[Clautero] Floating panel created. Toggle: Cmd+Shift+C", "info");
-
-  // Auto-show on first install
-  show();
+  Zotero.log("[Clautero] Sidebar manager initialized", "info");
 
   // ── Cleanup ──
   return () => {
-    win.removeEventListener("keydown", keyHandler, true);
-    panel.remove();
-    if (menuItem) menuItem.remove();
+    for (const fn of cleanups) fn();
+    splitter.remove();
+    container.remove();
+    if (sidenavBtn) sidenavBtn.remove();
     registeredElements = null;
     delete (win as any).__clauteroSidebar;
   };
