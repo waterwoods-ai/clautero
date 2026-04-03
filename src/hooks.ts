@@ -114,19 +114,37 @@ function doInitChat(
       try { Zotero.Notifier.unregisterObserver(itemNotifierID); } catch { /* ignore */ }
     });
 
-    // Listen for collection selection changes
-    const colNotifierID = Zotero.Notifier.registerObserver({
-      notify: (event: string, type: string) => {
-        if (type === "collection" && event === "select") {
-          if (!isAutoAttachEnabled()) return;
-          const col = getSelectedCollection();
-          if (col) chipsView.updateCollection(col);
+    // Poll for collection changes (Zotero doesn't fire notifier events
+    // when the user clicks a different collection in the library tree)
+    let lastCollectionId: number | null = null;
+    let lastItemId: number | null = null;
+    const contextPoll = (win as any).setInterval(() => {
+      if (!isAutoAttachEnabled()) return;
+
+      // Check if selected item changed
+      const item = getSelectedItem();
+      const itemId = item?.id ?? null;
+      if (itemId !== lastItemId) {
+        lastItemId = itemId;
+        if (item) {
+          chipsView.update(item);
+          return;
         }
-      },
-    }, ["collection"], "clautero-col");
-    cleanupList.push(() => {
-      try { Zotero.Notifier.unregisterObserver(colNotifierID); } catch { /* ignore */ }
-    });
+      }
+
+      // Check if selected collection changed
+      const col = getSelectedCollection();
+      const colId = col?.id ?? null;
+      if (colId !== lastCollectionId) {
+        lastCollectionId = colId;
+        if (col) {
+          chipsView.updateCollection(col);
+        } else if (!item) {
+          chipsView.update(null);
+        }
+      }
+    }, 1000);
+    cleanupList.push(() => (win as any).clearInterval(contextPoll));
   }
 
   // ── Sessions (max 5) ──
