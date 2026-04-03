@@ -121,7 +121,7 @@ export function initSidebarManager(
   let itemPaneContent: HTMLElement | null = null;
 
   function injectPanel(): boolean {
-    // Find the sidenav, then find its sibling content area
+    // Find the sidenav
     const sidenav = doc.querySelector("item-pane-sidenav") as HTMLElement;
     if (!sidenav || !sidenav.parentElement) {
       return false;
@@ -129,19 +129,35 @@ export function initSidebarManager(
 
     const paneParent = sidenav.parentElement;
 
-    // The content is the sibling of the sidenav (typically the first child)
+    // Log the structure for debugging
+    const childTags = Array.from(paneParent.children)
+      .map((c, i) => `${i}:${c.tagName}#${(c as HTMLElement).id || ""}`)
+      .join(", ");
+    Zotero.log(`[Clautero] Pane parent children: ${childTags}`, "info");
+
+    // The item details content is everything in paneParent that is NOT
+    // the sidenav. It could be a single element or multiple.
+    // Find the main content element (usually the first non-sidenav child)
     for (const child of Array.from(paneParent.children)) {
-      if (child !== sidenav && child.tagName.toLowerCase() !== "splitter") {
+      if (child !== sidenav
+        && child.tagName.toLowerCase() !== "splitter"
+        && child !== container) {
         itemPaneContent = child as HTMLElement;
         break;
       }
     }
 
-    // Insert our panel into the same parent, before the sidenav
-    paneParent.insertBefore(container, sidenav);
-    // No splitter needed — we replace the content area, not add beside it
+    if (itemPaneContent) {
+      // Insert our panel right after the item content, before the sidenav
+      // Structure becomes: [item-content(hidden)] [clautero-panel] [sidenav]
+      paneParent.insertBefore(container, sidenav);
+      Zotero.log(`[Clautero] Panel injected before sidenav, after content`, "info");
+    } else {
+      // Fallback: just insert before sidenav
+      paneParent.insertBefore(container, sidenav);
+      Zotero.log(`[Clautero] Panel injected before sidenav (no content found)`, "info");
+    }
 
-    Zotero.log(`[Clautero] Panel injected into pane parent: ${paneParent.tagName}#${paneParent.id || ""}`, "info");
     return true;
   }
 
@@ -233,20 +249,17 @@ export function initSidebarManager(
 
     if (panelVisible) {
       // Show our panel, hide item pane content
-      container.setAttribute("style",
-        "min-width:280px;max-width:800px;flex:1;display:flex;"
-      );
+      // Panel takes the same space as item content (flex:1)
+      (container as HTMLElement).style.cssText = "flex:1;display:flex;overflow:hidden;";
       if (itemPaneContent) {
-        (itemPaneContent as HTMLElement).style.display = "none";
+        itemPaneContent.style.display = "none";
       }
       textarea.focus();
     } else {
-      // Hide our panel, show item pane content
-      container.setAttribute("style",
-        "display:none;"
-      );
+      // Hide our panel, restore item pane content
+      (container as HTMLElement).style.cssText = "display:none;";
       if (itemPaneContent) {
-        (itemPaneContent as HTMLElement).style.display = "";
+        itemPaneContent.style.display = "";
       }
     }
 
