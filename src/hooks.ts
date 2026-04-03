@@ -225,7 +225,9 @@ function doInitChat(
   function updateSessionBar(): void {
     while (sessionBar.firstChild) sessionBar.removeChild(sessionBar.firstChild);
 
-    for (const s of sessions) {
+    for (let i = 0; i < sessions.length; i++) {
+      const s = sessions[i];
+      const displayNum = i + 1; // Always show 1-based position
       const tabWrap = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
       const isActive = s.id === activeSessionId;
       tabWrap.style.cssText = `
@@ -238,7 +240,7 @@ function doInitChat(
 
       const label = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
       label.style.cssText = `font-size:12px;font-weight:500;color:${isActive ? "#333" : "#888"};`;
-      label.textContent = String(s.id);
+      label.textContent = String(displayNum);
       label.addEventListener("click", () => switchSession(s.id));
       tabWrap.appendChild(label);
 
