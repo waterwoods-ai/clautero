@@ -1,5 +1,6 @@
 import { Addon } from "./addon";
 import { initSidebarManager } from "./modules/sidebar/SidebarManager";
+import type { SidebarElements } from "./modules/sidebar/SidebarManager";
 import { createInputController } from "./modules/chat/InputController";
 import { createChatState, addMessage, type ChatStateData } from "./modules/chat/ChatState";
 import { createMessageRenderer } from "./modules/chat/MessageRenderer";
@@ -15,6 +16,9 @@ export interface Hooks {
   onMainWindowUnload(window: Window): void;
 }
 
+const XHTML_NS = "http://www.w3.org/1999/xhtml";
+const MAX_SESSIONS = 5;
+
 function resolveCliPath(): string {
   try {
     const pref = Zotero.Prefs.get("extensions.clautero.claudeCliPath", true) as string;
@@ -25,11 +29,8 @@ function resolveCliPath(): string {
 }
 
 function isAutoAttachEnabled(): boolean {
-  try {
-    return Zotero.Prefs.get("extensions.clautero.autoAttachContext", true) !== false;
-  } catch {
-    return true;
-  }
+  try { return Zotero.Prefs.get("extensions.clautero.autoAttachContext", true) !== false; }
+  catch { return true; }
 }
 
 function getSelectedItem(): Zotero.Item | null {
@@ -41,42 +42,34 @@ function getSelectedItem(): Zotero.Item | null {
     return items.find((item: Zotero.Item) =>
       item.itemType !== "attachment" && item.itemType !== "note"
     ) || null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
+}
+
+// ── Session type ──
+interface Session {
+  id: number;
+  chatState: ChatStateData;
+  service: ReturnType<typeof createClauteroService> | null;
+  renderer: ReturnType<typeof createMessageRenderer>;
+  streamController: ReturnType<typeof createStreamController>;
+  messageContainer: HTMLElement;
 }
 
 function doInitChat(
   win: Window,
   addon: Addon,
-  elements: {
-    messageArea: HTMLElement;
-    textarea: HTMLTextAreaElement;
-    sendButton: HTMLElement;
-    contextBar: HTMLElement;
-  },
+  elements: SidebarElements,
   cleanupList: Array<() => void>
 ): void {
-  const { messageArea, textarea, sendButton, contextBar } = elements;
-
-  // Single conversation state
-  let chatState: ChatStateData = createChatState();
-  const renderer = createMessageRenderer(messageArea);
-  cleanupList.push(() => renderer.cleanup());
-
-  const streamController = createStreamController(
-    renderer,
-    () => chatState,
-    (next: ChatStateData) => { chatState = next; }
-  );
-  cleanupList.push(() => streamController.cleanup());
+  const { messageArea, textarea, sendButton, contextBar, statusBar, sessionBar } = elements;
+  const doc = win.document;
 
   const inputController = createInputController(textarea, sendButton);
   cleanupList.push(() => inputController.cleanup());
 
-  // Context integration
+  // ── Context ──
   let currentContext = "";
-  const chipsView = createContextChipsView(contextBar, win.document);
+  const chipsView = createContextChipsView(contextBar, doc);
   chipsView.setOnChange((ctx: string) => { currentContext = ctx; });
   cleanupList.push(() => chipsView.cleanup());
 
@@ -87,9 +80,7 @@ function doInitChat(
     const notifierID = Zotero.Notifier.registerObserver({
       notify: (event: string, type: string) => {
         if (type === "item" && (event === "select" || event === "modify")) {
-          if (isAutoAttachEnabled()) {
-            chipsView.update(getSelectedItem());
-          }
+          if (isAutoAttachEnabled()) chipsView.update(getSelectedItem());
         }
       },
     }, ["item"], "clautero");
@@ -98,75 +89,202 @@ function doInitChat(
     });
   }
 
-  // Claude service
-  let service: ReturnType<typeof createClauteroService> | null = null;
+  // ── Sessions (max 5) ──
+  const sessions: Session[] = [];
+  let activeSessionId = 0;
 
-  function getOrCreateService(): ReturnType<typeof createClauteroService> {
-    if (service) return service;
+  function createSession(): Session {
+    const id = sessions.length + 1;
+    const msgContainer = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+    msgContainer.style.cssText = "display:none;flex:1;overflow-y:auto;padding:16px;";
 
-    service = createClauteroService({
-      cwd: addon.workspaceDir,
-      cliPath: resolveCliPath(),
-      onChunk: (chunk: StreamChunk) => {
-        streamController.handleChunk(chunk);
-        if (chunk.type === "result" || chunk.type === "error") {
-          inputController.setDisabled(false);
-          inputController.focus();
-        }
-      },
-      onError: (error: Error) => {
-        Zotero.log(`[Clautero] Service error: ${error.message}`, "error");
-        renderer.appendTextChunk(`\nError: ${error.message}`);
-        renderer.finishAssistantMessage();
-        inputController.setDisabled(false);
-      },
+    // Add welcome for new sessions
+    const welcome = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+    welcome.className = "clautero-welcome";
+    welcome.style.cssText = "display:flex;align-items:center;justify-content:center;height:100%;";
+    const greet = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
+    greet.style.cssText = "font-size:22px;font-weight:400;color:#1a1a1a;font-family:Georgia,serif;text-align:center;";
+    greet.textContent = "Ask Claude about\nyour research";
+    welcome.appendChild(greet);
+    msgContainer.appendChild(welcome);
+
+    messageArea.parentElement?.insertBefore(msgContainer, messageArea);
+
+    const renderer = createMessageRenderer(msgContainer);
+    let chatState = createChatState();
+    const streamController = createStreamController(
+      renderer,
+      () => chatState,
+      (next: ChatStateData) => { chatState = next; }
+    );
+
+    const session: Session = {
+      id,
+      chatState,
+      service: null,
+      renderer,
+      streamController,
+      messageContainer: msgContainer,
+    };
+    // Use getter for chatState since it mutates
+    Object.defineProperty(session, "chatState", {
+      get: () => chatState,
+      set: (v: ChatStateData) => { chatState = v; },
     });
-    cleanupList.push(() => service?.cleanup());
-    return service;
+
+    sessions.push(session);
+    return session;
   }
 
-  // Send handler
+  function switchSession(id: number): void {
+    // Hide all message containers
+    for (const s of sessions) {
+      s.messageContainer.style.display = "none";
+    }
+    // Hide the original messageArea (has welcome)
+    messageArea.style.display = "none";
+
+    const session = sessions.find(s => s.id === id);
+    if (session) {
+      session.messageContainer.style.display = "";
+      session.messageContainer.style.cssText = "flex:1;overflow-y:auto;padding:16px;";
+      activeSessionId = id;
+    }
+
+    updateSessionBar();
+  }
+
+  function getActiveSession(): Session | undefined {
+    return sessions.find(s => s.id === activeSessionId);
+  }
+
+  // ── Session tab bar ──
+  function updateSessionBar(): void {
+    while (sessionBar.firstChild) sessionBar.removeChild(sessionBar.firstChild);
+
+    for (const s of sessions) {
+      const btn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
+      const isActive = s.id === activeSessionId;
+      btn.style.cssText = `
+        width:24px;height:24px;border-radius:4px;cursor:pointer;
+        font-size:12px;font-weight:500;border:1px solid ${isActive ? "#333" : "#ddd"};
+        background:${isActive ? "#fff" : "transparent"};color:${isActive ? "#333" : "#888"};
+      `;
+      btn.textContent = String(s.id);
+      btn.addEventListener("click", () => switchSession(s.id));
+      sessionBar.appendChild(btn);
+    }
+
+    // Spacer
+    const spacer = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
+    spacer.style.cssText = "flex:1;";
+    sessionBar.appendChild(spacer);
+
+    // [+] button
+    if (sessions.length < MAX_SESSIONS) {
+      const addBtn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
+      addBtn.style.cssText = `
+        width:24px;height:24px;border-radius:4px;cursor:pointer;
+        font-size:14px;border:1px solid #ddd;background:transparent;color:#888;
+      `;
+      addBtn.textContent = "+";
+      addBtn.addEventListener("click", () => {
+        const newSession = createSession();
+        switchSession(newSession.id);
+      });
+      sessionBar.appendChild(addBtn);
+    }
+  }
+
+  // Create first session and switch to it
+  const firstSession = createSession();
+  switchSession(firstSession.id);
+  // Hide original messageArea (we use per-session containers)
+  messageArea.style.display = "none";
+
+  // ── Status bar update ──
+  function updateStatus(model?: string): void {
+    while (statusBar.firstChild) statusBar.removeChild(statusBar.firstChild);
+    const modelEl = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
+    modelEl.style.cssText = "font-weight:500;";
+    modelEl.textContent = model || "Opus";
+    statusBar.appendChild(modelEl);
+  }
+  updateStatus();
+
+  // ── Send handler ──
   inputController.setOnSend(async (text: string) => {
-    // Add user message to chat
-    chatState = addMessage(chatState, {
-      role: "user",
-      content: text,
-      chunks: [],
-      timestamp: Date.now(),
+    const session = getActiveSession();
+    if (!session) return;
+
+    // Remove welcome
+    const welcome = session.messageContainer.querySelector(".clautero-welcome");
+    if (welcome) welcome.remove();
+
+    // Add user message
+    session.chatState = addMessage(session.chatState, {
+      role: "user", content: text, chunks: [], timestamp: Date.now(),
     });
-    renderer.renderUserMessage(text);
+    session.renderer.renderUserMessage(text);
+
+    // Create service if needed
+    if (!session.service) {
+      session.service = createClauteroService({
+        cwd: addon.workspaceDir,
+        cliPath: resolveCliPath(),
+        onChunk: (chunk: StreamChunk) => {
+          session.streamController.handleChunk(chunk);
+
+          // Update model name from system messages
+          if (chunk.type === "system" || chunk.type === "result") {
+            const meta = chunk.metadata ?? {};
+            if (typeof meta.model === "string") {
+              updateStatus(meta.model);
+            }
+          }
+
+          if (chunk.type === "result" || chunk.type === "error") {
+            inputController.setDisabled(false);
+            inputController.focus();
+          }
+        },
+        onError: (error: Error) => {
+          session.renderer.appendTextChunk(`\nError: ${error.message}`);
+          session.renderer.finishAssistantMessage();
+          inputController.setDisabled(false);
+        },
+      });
+      cleanupList.push(() => session.service?.cleanup());
+    }
 
     // Start session if needed
-    const svc = getOrCreateService();
     try {
-      if (svc.getState() !== "active") {
-        renderer.appendTextChunk("Connecting to Claude...\n");
-        await svc.startSession();
+      if (session.service.getState() !== "active") {
+        await session.service.startSession();
       }
-    } catch (startError) {
-      const msg = startError instanceof Error ? startError.message : String(startError);
-      renderer.appendTextChunk(`Error: Could not start Claude. ${msg}`);
-      renderer.finishAssistantMessage();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      session.renderer.appendTextChunk(`Error: Could not start Claude. ${msg}`);
+      session.renderer.finishAssistantMessage();
       inputController.setDisabled(false);
       return;
     }
 
-    // Send message
+    // Send
     inputController.setDisabled(true);
-    streamController.startStream();
-
+    session.streamController.startStream();
     try {
-      const fullMessage = currentContext ? `${currentContext}\n\n${text}` : text;
-      svc.sendMessage(fullMessage);
-    } catch (sendError) {
-      const msg = sendError instanceof Error ? sendError.message : String(sendError);
-      renderer.appendTextChunk(`Error: ${msg}`);
-      renderer.finishAssistantMessage();
+      const full = currentContext ? `${currentContext}\n\n${text}` : text;
+      session.service.sendMessage(full);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      session.renderer.appendTextChunk(`Error: ${msg}`);
+      session.renderer.finishAssistantMessage();
       inputController.setDisabled(false);
     }
   });
 
-  Zotero.log("[Clautero] Chat system initialized (single conversation)", "info");
+  Zotero.log("[Clautero] Chat system initialized (Claudian-style, max 5 sessions)", "info");
 }
 
 export function createHooks(addon: Addon): Hooks {
@@ -183,7 +301,6 @@ export function createHooks(addon: Addon): Hooks {
         for (const cleanup of state.cleanup) cleanup();
       }
       windowStates.clear();
-      Zotero.log("[Clautero] Plugin shut down", "info");
     },
 
     onMainWindowLoad(window: Window) {
@@ -191,30 +308,27 @@ export function createHooks(addon: Addon): Hooks {
       windowStates.set(window, state);
 
       try {
-        const sidebarCleanup = initSidebarManager(window, addon.rootURI);
-        state.cleanup.push(sidebarCleanup);
-      } catch (error) {
-        Zotero.log(`[Clautero] Failed to init sidebar: ${error}`, "error");
+        state.cleanup.push(initSidebarManager(window, addon.rootURI));
+      } catch (e) {
+        Zotero.log(`[Clautero] Sidebar init error: ${e}`, "error");
       }
 
-      // Poll for sidebar elements then init chat
-      let chatDone = false;
+      // Poll for elements then init chat
+      let done = false;
       const poll = (window as any).setInterval(() => {
-        if (chatDone) return;
+        if (done) return;
         const sidebar = (window as any).__clauteroSidebar;
         const elements = sidebar?.getElements();
         if (!elements) return;
-        chatDone = true;
+        done = true;
         (window as any).clearInterval(poll);
         try {
           doInitChat(window, addon, elements, state.cleanup);
-        } catch (error) {
-          Zotero.log(`[Clautero] Failed to init chat: ${error}`, "error");
+        } catch (e) {
+          Zotero.log(`[Clautero] Chat init error: ${e}`, "error");
         }
       }, 500);
       state.cleanup.push(() => (window as any).clearInterval(poll));
-
-      Zotero.log("[Clautero] Main window loaded", "info");
     },
 
     onMainWindowUnload(window: Window) {

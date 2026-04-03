@@ -101,7 +101,16 @@ export function createMessageRenderer(messageArea: HTMLElement) {
   }
 
   function renderUserMessage(content: string): void {
+    // Remove welcome screen on first message
+    const welcome = messageArea.querySelector(".clautero-welcome");
+    if (welcome) welcome.remove();
+
     const bubble = createEl(doc, "div", "clautero-msg clautero-msg-user");
+    bubble.style.cssText = `
+      background:#e8f0fe;border-radius:16px 16px 4px 16px;
+      padding:8px 12px;margin:6px 0 6px 40px;line-height:1.5;
+      word-wrap:break-word;
+    `;
     appendTextNode(bubble, content);
     messageArea.appendChild(bubble);
     currentAssistantBubble = null;
@@ -114,6 +123,10 @@ export function createMessageRenderer(messageArea: HTMLElement) {
       const bubble = createEl(
         doc, "div", "clautero-msg clautero-msg-assistant"
       );
+      bubble.style.cssText = `
+        padding:8px 12px;margin:6px 0 6px 0;line-height:1.5;
+        word-wrap:break-word;
+      `;
       messageArea.appendChild(bubble);
       currentAssistantBubble = bubble;
       currentTextContainer = null;
@@ -140,7 +153,9 @@ export function createMessageRenderer(messageArea: HTMLElement) {
   function renderThinkingStart(): void {
     const bubble = ensureAssistantBubble();
     const details = createEl(doc, "details", "clautero-thinking");
+    details.style.cssText = "border-left:2px solid #e0e0e0;padding-left:10px;margin:4px 0;";
     const summary = createEl(doc, "summary", "clautero-thinking-summary");
+    summary.style.cssText = "font-size:12px;color:#888;cursor:pointer;";
     appendTextNode(summary, "Thinking\u2026");
     details.appendChild(summary);
 
@@ -170,11 +185,14 @@ export function createMessageRenderer(messageArea: HTMLElement) {
   function renderToolUseStart(toolName: string, args: string): void {
     const bubble = ensureAssistantBubble();
     const details = createEl(doc, "details", "clautero-tool-use");
+    details.style.cssText = "background:#f8f8f8;border-radius:8px;padding:6px 10px;margin:4px 0;";
     const summary = createEl(doc, "summary", "clautero-tool-summary");
+    summary.style.cssText = "font-size:12px;color:#666;cursor:pointer;font-weight:500;";
     appendTextNode(summary, `Tool: ${toolName}`);
     details.appendChild(summary);
 
     const argsBlock = createEl(doc, "pre", "clautero-tool-args");
+    argsBlock.style.cssText = "font-size:11px;color:#888;overflow-x:auto;margin:4px 0;white-space:pre-wrap;";
     appendTextNode(argsBlock, args);
     details.appendChild(argsBlock);
 

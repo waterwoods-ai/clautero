@@ -72,6 +72,11 @@ function buildChipElement(
   const chip = createHtmlEl(doc, "span", {
     class: "clautero-context-chip",
   });
+  chip.style.cssText = `
+    display:inline-flex;align-items:center;gap:4px;
+    background:#f0f0f0;border-radius:12px;padding:3px 6px 3px 10px;
+    font-size:12px;color:#555;margin:2px 4px 2px 0;
+  `;
   const labelSpan = createHtmlEl(doc, "span", {
     class: "clautero-context-chip-label",
   });
@@ -82,6 +87,10 @@ function buildChipElement(
     class: "clautero-context-chip-remove",
     "aria-label": `Remove ${label}`,
   });
+  removeBtn.style.cssText = `
+    background:none;border:none;font-size:14px;cursor:pointer;
+    color:#999;padding:0 2px;line-height:1;
+  `;
   removeBtn.textContent = "\u00D7";
   removeBtn.addEventListener("click", onRemove);
   chip.appendChild(removeBtn);
