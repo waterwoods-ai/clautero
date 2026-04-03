@@ -91,6 +91,52 @@ function truncateIfNeeded(context: string, maxLength: number): string {
   return context.slice(0, truncateAt) + TRUNCATION_INDICATOR;
 }
 
+/**
+ * Build context for a collection (folder) — lists all papers with metadata.
+ */
+export async function buildCollectionContext(
+  collection: Zotero.Collection
+): Promise<string> {
+  try {
+    const items = collection.getChildItems();
+    const regularItems = items.filter(
+      (item: Zotero.Item) => item.isRegularItem()
+    );
+
+    if (regularItems.length === 0) {
+      return "";
+    }
+
+    const parts: string[] = [
+      `<zotero_collection>`,
+      `<name>${collection.name}</name>`,
+      `<paper_count>${regularItems.length}</paper_count>`,
+      `<papers>`,
+    ];
+
+    for (const item of regularItems) {
+      const metadata = extractItemMetadata(item);
+      const pdfPath = getPdfFilePath(item);
+      parts.push(`<paper>`);
+      parts.push(`<metadata>\n${metadata}\n</metadata>`);
+      if (pdfPath) {
+        parts.push(`<pdf_path>${pdfPath}</pdf_path>`);
+      }
+      parts.push(`</paper>`);
+    }
+
+    parts.push(`</papers>`);
+    parts.push(`</zotero_collection>`);
+
+    const context = parts.join("\n");
+    const maxLength = getMaxContextLength();
+    return truncateIfNeeded(context, maxLength);
+  } catch (error) {
+    Zotero.log(`[Clautero] Failed to build collection context: ${error}`, "warning");
+    return "";
+  }
+}
+
 export async function buildContext(item: Zotero.Item): Promise<string> {
   try {
     const metadata = extractItemMetadata(item);

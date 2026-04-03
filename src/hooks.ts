@@ -45,6 +45,16 @@ function getSelectedItem(): Zotero.Item | null {
   } catch { return null; }
 }
 
+function getSelectedCollection(): Zotero.Collection | null {
+  try {
+    const pane = Zotero.getActiveZoteroPane();
+    if (!pane) return null;
+    // getSelectedCollection returns the selected collection in the library tree
+    const collection = (pane as any).getSelectedCollection?.();
+    return collection || null;
+  } catch { return null; }
+}
+
 // ── Session type ──
 interface Session {
   id: number;
@@ -74,18 +84,48 @@ function doInitChat(
   cleanupList.push(() => chipsView.cleanup());
 
   if (isAutoAttachEnabled()) {
+    // Initial context: check if item or collection is selected
     const initialItem = getSelectedItem();
-    if (initialItem) chipsView.update(initialItem);
+    if (initialItem) {
+      chipsView.update(initialItem);
+    } else {
+      const initialCollection = getSelectedCollection();
+      if (initialCollection) chipsView.updateCollection(initialCollection);
+    }
 
-    const notifierID = Zotero.Notifier.registerObserver({
+    // Listen for item selection changes
+    const itemNotifierID = Zotero.Notifier.registerObserver({
       notify: (event: string, type: string) => {
         if (type === "item" && (event === "select" || event === "modify")) {
-          if (isAutoAttachEnabled()) chipsView.update(getSelectedItem());
+          if (!isAutoAttachEnabled()) return;
+          const item = getSelectedItem();
+          if (item) {
+            chipsView.update(item);
+          }
+          // If no item selected, check if a collection is active
+          if (!item) {
+            const col = getSelectedCollection();
+            if (col) chipsView.updateCollection(col);
+          }
         }
       },
     }, ["item"], "clautero");
     cleanupList.push(() => {
-      try { Zotero.Notifier.unregisterObserver(notifierID); } catch { /* ignore */ }
+      try { Zotero.Notifier.unregisterObserver(itemNotifierID); } catch { /* ignore */ }
+    });
+
+    // Listen for collection selection changes
+    const colNotifierID = Zotero.Notifier.registerObserver({
+      notify: (event: string, type: string) => {
+        if (type === "collection" && event === "select") {
+          if (!isAutoAttachEnabled()) return;
+          const col = getSelectedCollection();
+          if (col) chipsView.updateCollection(col);
+        }
+      },
+    }, ["collection"], "clautero-col");
+    cleanupList.push(() => {
+      try { Zotero.Notifier.unregisterObserver(colNotifierID); } catch { /* ignore */ }
     });
   }
 
