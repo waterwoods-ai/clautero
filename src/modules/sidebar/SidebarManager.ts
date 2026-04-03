@@ -147,13 +147,14 @@ export function initSidebarManager(
       }
     }
 
+    // Make pane parent position:relative so our absolute overlay works
+    (paneParent as HTMLElement).style.position = "relative";
+
     if (itemPaneContent) {
-      // Insert our panel right after the item content, before the sidenav
-      // Structure becomes: [item-content(hidden)] [clautero-panel] [sidenav]
+      // Insert our panel into paneParent — it will overlay on top when shown
       paneParent.insertBefore(container, sidenav);
       Zotero.log(`[Clautero] Panel injected before sidenav, after content`, "info");
     } else {
-      // Fallback: just insert before sidenav
       paneParent.insertBefore(container, sidenav);
       Zotero.log(`[Clautero] Panel injected before sidenav (no content found)`, "info");
     }
@@ -247,32 +248,33 @@ export function initSidebarManager(
   cleanups.push(() => (win as any).clearInterval(pollTimer));
 
   // ── Toggle logic ──
+  // Use a stacking approach: both content and chat panel exist in the same
+  // space. We toggle which one is visible using z-index/position overlay
+  // instead of display:none, so Zotero's pane state is never disrupted.
+  function showChat(): void {
+    panelVisible = true;
+    // Show our panel on top of item content (don't hide content)
+    (container as HTMLElement).style.cssText =
+      "position:absolute;top:0;left:0;right:0;bottom:0;display:flex;z-index:100;background:#fff;";
+    textarea.focus();
+    if (sidenavBtn) sidenavBtn.style.background = "rgba(0,0,0,0.08)";
+  }
+
+  function hideChat(): void {
+    panelVisible = false;
+    (container as HTMLElement).style.cssText = "display:none;";
+    if (sidenavBtn) sidenavBtn.style.background = "";
+  }
+
   function togglePanel(): void {
-    panelVisible = !panelVisible;
-
     if (panelVisible) {
-      // Show our panel, hide item pane content
-      // Panel takes the same space as item content (flex:1)
-      (container as HTMLElement).style.cssText = "flex:1;display:flex;overflow:hidden;";
-      if (itemPaneContent) {
-        itemPaneContent.style.display = "none";
-      }
-      textarea.focus();
+      hideChat();
     } else {
-      // Hide our panel, restore item pane content
-      (container as HTMLElement).style.cssText = "display:none;";
-      if (itemPaneContent) {
-        itemPaneContent.style.display = "";
-      }
-    }
-
-    // Highlight active button
-    if (sidenavBtn) {
-      sidenavBtn.style.background = panelVisible ? "rgba(0,0,0,0.08)" : "";
+      showChat();
     }
   }
 
-  // When any OTHER sidenav button is clicked, hide our panel and restore content
+  // When any OTHER sidenav button is clicked, hide our panel
   function watchOtherButtons(): void {
     const sidenav = doc.querySelector("item-pane-sidenav") as HTMLElement;
     if (!sidenav) return;
@@ -280,16 +282,8 @@ export function initSidebarManager(
     sidenav.addEventListener("click", (e: Event) => {
       const target = e.target as HTMLElement;
       const btn = target.closest(".btn") as HTMLElement | null;
-      // If click is on a sidenav button that is NOT ours, hide our panel
       if (btn && btn.id !== "clautero-sidenav-btn" && panelVisible) {
-        panelVisible = false;
-        (container as HTMLElement).style.cssText = "display:none;";
-        if (itemPaneContent) {
-          itemPaneContent.style.display = "";
-        }
-        if (sidenavBtn) {
-          sidenavBtn.style.background = "";
-        }
+        hideChat();
       }
     }, true);
   }
@@ -320,10 +314,7 @@ export function initSidebarManager(
   // ── Cleanup ──
   return () => {
     for (const fn of cleanups) fn();
-    // Restore item pane content if hidden
-    if (itemPaneContent) {
-      (itemPaneContent as HTMLElement).style.display = "";
-    }
+    hideChat();
     container.remove();
     if (sidenavBtn) sidenavBtn.remove();
     registeredElements = null;
