@@ -119,13 +119,65 @@ export function initSidebarManager(
   panel = container;
   registeredElements = Object.freeze({ messageArea, contextBar, textarea, sendButton });
 
-  // ── Step 2: Inject panel into the DOM ──
-  // Append to #main-window — it will appear on the far right
-  const mainWindow = doc.getElementById("main-window");
-  if (mainWindow) {
-    mainWindow.appendChild(splitter);
-    mainWindow.appendChild(container);
-    Zotero.log("[Clautero] Panel injected into #main-window", "info");
+  // ── Step 2: Inject panel into the horizontal layout ──
+  // #main-window is vertical (vbox). We need the hbox inside it that
+  // contains the library tree, items list, and item pane side by side.
+  // Find it by looking for the sidenav's ancestor hbox.
+  let injected = false;
+
+  function injectPanel(): boolean {
+    // Strategy: find the item-pane-sidenav and go up to its containing hbox
+    const sidenav = doc.querySelector("item-pane-sidenav");
+    if (sidenav) {
+      let ancestor: Element | null = sidenav.parentElement;
+      // Walk up until we find an hbox (the horizontal layout)
+      while (ancestor && ancestor.tagName.toLowerCase() !== "hbox") {
+        ancestor = ancestor.parentElement;
+      }
+      if (ancestor) {
+        ancestor.appendChild(splitter);
+        ancestor.appendChild(container);
+        Zotero.log(`[Clautero] Panel injected into ${ancestor.tagName}#${ancestor.id || ""}`, "info");
+        return true;
+      }
+    }
+
+    // Fallback: find any hbox that has splitters (the main 3-column layout)
+    const hboxes = doc.querySelectorAll("hbox");
+    for (const hbox of Array.from(hboxes)) {
+      if (hbox.querySelector(":scope > splitter") && hbox.children.length >= 3) {
+        hbox.appendChild(splitter);
+        hbox.appendChild(container);
+        Zotero.log(`[Clautero] Panel injected into hbox (splitter fallback)`, "info");
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  // Try immediately, then poll if needed
+  injected = injectPanel();
+  if (!injected) {
+    let injectPoll = 0;
+    const injectTimer = (win as any).setInterval(() => {
+      injectPoll++;
+      if (injectPoll > 30) {
+        (win as any).clearInterval(injectTimer);
+        // Last resort: append to #main-window
+        const mw = doc.getElementById("main-window");
+        if (mw) {
+          mw.appendChild(splitter);
+          mw.appendChild(container);
+          Zotero.log("[Clautero] Panel injected into #main-window (fallback)", "warning");
+        }
+        return;
+      }
+      if (injectPanel()) {
+        (win as any).clearInterval(injectTimer);
+      }
+    }, 500);
+    cleanups.push(() => (win as any).clearInterval(injectTimer));
   }
 
   // ── Step 3: Inject button into sidenav ──
