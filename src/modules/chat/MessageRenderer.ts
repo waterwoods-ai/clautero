@@ -79,28 +79,60 @@ function sanitizeAndAppendHtml(
   parent: HTMLElement,
   html: string
 ): void {
+  const doc = parent.ownerDocument;
+
+  // Sanitize if DOMPurify is available
+  let cleanHtml = html;
   if (purify && typeof purify.sanitize === "function") {
-    const doc = parent.ownerDocument;
-    const clean = purify.sanitize(html, {
-      RETURN_DOM_FRAGMENT: false,
-      RETURN_DOM: false,
-    });
     try {
-      const parser = new DOMParser();
-      const parsed = parser.parseFromString(
-        `<div xmlns="${XHTML_NS}">${clean}</div>`,
-        "application/xhtml+xml"
-      );
+      cleanHtml = purify.sanitize(html, {
+        RETURN_DOM_FRAGMENT: false,
+        RETURN_DOM: false,
+      });
+    } catch {
+      // DOMPurify failed, use raw html (from our own markdownToHtml, safe)
+    }
+  }
+
+  // Try XHTML DOMParser first
+  try {
+    const parser = new (doc.defaultView as any).DOMParser();
+    const parsed = parser.parseFromString(
+      `<div xmlns="${XHTML_NS}">${cleanHtml}</div>`,
+      "application/xhtml+xml"
+    );
+    // Check for parse errors
+    const err = parsed.querySelector("parsererror");
+    if (!err) {
       const root = parsed.documentElement;
       while (root.firstChild) {
         parent.appendChild(doc.adoptNode(root.firstChild));
       }
       return;
-    } catch {
-      // DOMParser failed, fall through to textContent
     }
+  } catch {
+    // XHTML parse failed
   }
-  // Safe fallback: just use textContent (no HTML rendering but secure)
+
+  // Try HTML parser (more lenient, handles unclosed tags)
+  try {
+    const parser = new (doc.defaultView as any).DOMParser();
+    const parsed = parser.parseFromString(
+      `<body>${cleanHtml}</body>`,
+      "text/html"
+    );
+    const body = parsed.body;
+    if (body) {
+      while (body.firstChild) {
+        parent.appendChild(doc.adoptNode(body.firstChild));
+      }
+      return;
+    }
+  } catch {
+    // HTML parse also failed
+  }
+
+  // Last resort: textContent
   appendTextNode(parent, html);
 }
 
