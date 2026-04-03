@@ -44,18 +44,11 @@ export function initSidebarManager(
   let sidenavBtn: HTMLElement | null = null;
   const cleanups: Array<() => void> = [];
 
-  // ── Step 1: Create the side panel (hidden initially) ──
-  // This is a XUL vbox that sits alongside the item pane
-  const splitter = createXUL(doc, "splitter");
-  splitter.setAttribute("id", "clautero-splitter");
-  splitter.setAttribute("resizebefore", "closest");
-  splitter.setAttribute("resizeafter", "closest");
-  splitter.setAttribute("style", "border:none;min-width:4px;max-width:6px;background:#d0d0d0;cursor:col-resize;");
-
+  // ── Step 1: Create the panel (hidden initially) ──
+  // This replaces the item pane content when the Clautero icon is clicked
   const container = createXUL(doc, "vbox");
   container.setAttribute("id", "clautero-sidebar");
-  container.setAttribute("width", "400");
-  container.setAttribute("style", "min-width:280px;max-width:800px;border-inline-start:1px solid #ccc;display:none;");
+  container.setAttribute("style", "display:none;");
 
   // XHTML wrapper for chat UI
   const wrapper = htmlEl(doc, "div", `
@@ -119,66 +112,55 @@ export function initSidebarManager(
   panel = container;
   registeredElements = Object.freeze({ messageArea, contextBar, textarea, sendButton });
 
-  // ── Step 2: Inject panel into the horizontal layout ──
-  // #main-window is vertical (vbox). We need the hbox inside it that
-  // contains the library tree, items list, and item pane side by side.
-  // Find it by looking for the sidenav's ancestor hbox.
+  // ── Step 2: Inject panel into the item pane content area ──
+  // The right pane has: [content area | sidenav icons]
+  // We inject our panel into the content area's parent, alongside the
+  // existing item details. When Clautero icon is clicked, we hide the
+  // item pane content and show ours (and vice versa).
   let injected = false;
+  let itemPaneContent: HTMLElement | null = null;
 
   function injectPanel(): boolean {
-    // Strategy: find the item-pane-sidenav and go up to its containing hbox
-    const sidenav = doc.querySelector("item-pane-sidenav");
-    if (sidenav) {
-      let ancestor: Element | null = sidenav.parentElement;
-      // Walk up until we find an hbox (the horizontal layout)
-      while (ancestor && ancestor.tagName.toLowerCase() !== "hbox") {
-        ancestor = ancestor.parentElement;
-      }
-      if (ancestor) {
-        ancestor.appendChild(splitter);
-        ancestor.appendChild(container);
-        Zotero.log(`[Clautero] Panel injected into ${ancestor.tagName}#${ancestor.id || ""}`, "info");
-        return true;
+    // Find the sidenav, then find its sibling content area
+    const sidenav = doc.querySelector("item-pane-sidenav") as HTMLElement;
+    if (!sidenav || !sidenav.parentElement) {
+      return false;
+    }
+
+    const paneParent = sidenav.parentElement;
+
+    // The content is the sibling of the sidenav (typically the first child)
+    for (const child of Array.from(paneParent.children)) {
+      if (child !== sidenav && child.tagName.toLowerCase() !== "splitter") {
+        itemPaneContent = child as HTMLElement;
+        break;
       }
     }
 
-    // Fallback: find any hbox that has splitters (the main 3-column layout)
-    const hboxes = doc.querySelectorAll("hbox");
-    for (const hbox of Array.from(hboxes)) {
-      if (hbox.querySelector(":scope > splitter") && hbox.children.length >= 3) {
-        hbox.appendChild(splitter);
-        hbox.appendChild(container);
-        Zotero.log(`[Clautero] Panel injected into hbox (splitter fallback)`, "info");
-        return true;
+    // Insert our panel into the same parent, before the sidenav
+    paneParent.insertBefore(container, sidenav);
+    // No splitter needed — we replace the content area, not add beside it
+
+    Zotero.log(`[Clautero] Panel injected into pane parent: ${paneParent.tagName}#${paneParent.id || ""}`, "info");
+    return true;
+  }
+
+  // Poll until sidenav exists
+  let injectPoll = 0;
+  const injectTimer = (win as any).setInterval(() => {
+    injectPoll++;
+    if (injectPoll > 60) {
+      (win as any).clearInterval(injectTimer);
+      return;
+    }
+    if (!injected) {
+      injected = injectPanel();
+      if (injected) {
+        (win as any).clearInterval(injectTimer);
       }
     }
-
-    return false;
-  }
-
-  // Try immediately, then poll if needed
-  injected = injectPanel();
-  if (!injected) {
-    let injectPoll = 0;
-    const injectTimer = (win as any).setInterval(() => {
-      injectPoll++;
-      if (injectPoll > 30) {
-        (win as any).clearInterval(injectTimer);
-        // Last resort: append to #main-window
-        const mw = doc.getElementById("main-window");
-        if (mw) {
-          mw.appendChild(splitter);
-          mw.appendChild(container);
-          Zotero.log("[Clautero] Panel injected into #main-window (fallback)", "warning");
-        }
-        return;
-      }
-      if (injectPanel()) {
-        (win as any).clearInterval(injectTimer);
-      }
-    }, 500);
-    cleanups.push(() => (win as any).clearInterval(injectTimer));
-  }
+  }, 500);
+  cleanups.push(() => (win as any).clearInterval(injectTimer));
 
   // ── Step 3: Inject button into sidenav ──
   function injectSidenavButton(): void {
@@ -248,12 +230,24 @@ export function initSidebarManager(
   // ── Toggle logic ──
   function togglePanel(): void {
     panelVisible = !panelVisible;
-    const display = panelVisible ? "" : "none";
-    container.setAttribute("style", container.getAttribute("style")!.replace(/display:[^;]+;?/, `display:${display};`));
-    splitter.setAttribute("style", splitter.getAttribute("style")!.replace(/display:[^;]+;?/, "") + (panelVisible ? "" : "display:none;"));
 
     if (panelVisible) {
+      // Show our panel, hide item pane content
+      container.setAttribute("style",
+        "min-width:280px;max-width:800px;flex:1;display:flex;"
+      );
+      if (itemPaneContent) {
+        (itemPaneContent as HTMLElement).style.display = "none";
+      }
       textarea.focus();
+    } else {
+      // Hide our panel, show item pane content
+      container.setAttribute("style",
+        "display:none;"
+      );
+      if (itemPaneContent) {
+        (itemPaneContent as HTMLElement).style.display = "";
+      }
     }
 
     // Highlight active button
@@ -288,7 +282,10 @@ export function initSidebarManager(
   // ── Cleanup ──
   return () => {
     for (const fn of cleanups) fn();
-    splitter.remove();
+    // Restore item pane content if hidden
+    if (itemPaneContent) {
+      (itemPaneContent as HTMLElement).style.display = "";
+    }
     container.remove();
     if (sidenavBtn) sidenavBtn.remove();
     registeredElements = null;
