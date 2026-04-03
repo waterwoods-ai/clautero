@@ -158,21 +158,65 @@ function doInitChat(
     return sessions.find(s => s.id === activeSessionId);
   }
 
+  function closeSession(id: number): void {
+    if (sessions.length <= 1) return; // Don't close the last one
+
+    const idx = sessions.findIndex(s => s.id === id);
+    if (idx === -1) return;
+
+    const session = sessions[idx];
+    // Cleanup service
+    session.service?.cleanup();
+    session.renderer.cleanup();
+    session.streamController.cleanup();
+    session.messageContainer.remove();
+
+    sessions.splice(idx, 1);
+
+    // If closing active, switch to first remaining
+    if (activeSessionId === id) {
+      switchSession(sessions[0].id);
+    } else {
+      updateSessionBar();
+    }
+  }
+
   // ── Session tab bar ──
   function updateSessionBar(): void {
     while (sessionBar.firstChild) sessionBar.removeChild(sessionBar.firstChild);
 
     for (const s of sessions) {
-      const btn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
+      const tabWrap = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
       const isActive = s.id === activeSessionId;
-      btn.style.cssText = `
-        width:24px;height:24px;border-radius:4px;cursor:pointer;
-        font-size:12px;font-weight:500;border:1px solid ${isActive ? "#333" : "#ddd"};
-        background:${isActive ? "#fff" : "transparent"};color:${isActive ? "#333" : "#888"};
+      tabWrap.style.cssText = `
+        display:inline-flex;align-items:center;gap:2px;
+        border-radius:4px;cursor:pointer;
+        border:1px solid ${isActive ? "#333" : "#ddd"};
+        background:${isActive ? "#fff" : "transparent"};
+        padding:0 2px 0 6px;height:24px;
       `;
-      btn.textContent = String(s.id);
-      btn.addEventListener("click", () => switchSession(s.id));
-      sessionBar.appendChild(btn);
+
+      const label = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
+      label.style.cssText = `font-size:12px;font-weight:500;color:${isActive ? "#333" : "#888"};`;
+      label.textContent = String(s.id);
+      label.addEventListener("click", () => switchSession(s.id));
+      tabWrap.appendChild(label);
+
+      // Close button (only if more than 1 session)
+      if (sessions.length > 1) {
+        const closeBtn = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
+        closeBtn.style.cssText = `
+          font-size:11px;color:#aaa;cursor:pointer;padding:0 2px;line-height:1;
+        `;
+        closeBtn.textContent = "\u00D7";
+        closeBtn.addEventListener("click", (e: Event) => {
+          e.stopPropagation();
+          closeSession(s.id);
+        });
+        tabWrap.appendChild(closeBtn);
+      }
+
+      sessionBar.appendChild(tabWrap);
     }
 
     // Spacer

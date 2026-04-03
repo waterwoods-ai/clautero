@@ -245,8 +245,9 @@ export function initSidebarManager(
 
   function showChat(): void {
     panelVisible = true;
+    // Leave right space for sidenav icon bar (~40px)
     (container as HTMLElement).style.cssText =
-      "position:absolute;top:0;left:0;right:0;bottom:0;display:flex;z-index:100;background:#fff;";
+      "position:absolute;top:0;left:0;right:40px;bottom:0;display:flex;z-index:100;background:#fff;";
     textarea.focus();
     if (sidenavBtn) sidenavBtn.style.background = "rgba(0,0,0,0.08)";
   }
@@ -264,10 +265,16 @@ export function initSidebarManager(
   function watchOtherButtons(): void {
     const sidenav = doc.querySelector("item-pane-sidenav") as HTMLElement;
     if (!sidenav) return;
+    // Only hide chat when user clicks another SIDENAV SECTION button
+    // (not when clicking items in the library list)
     sidenav.addEventListener("click", (e: Event) => {
       const target = e.target as HTMLElement;
       const btn = target.closest(".btn") as HTMLElement | null;
-      if (btn && btn.id !== "clautero-sidenav-btn" && panelVisible) hideChat();
+      // Only react to sidenav buttons that are NOT ours and NOT the toggle button
+      if (btn && btn.id !== "clautero-sidenav-btn"
+        && !btn.hasAttribute("data-action") && panelVisible) {
+        hideChat();
+      }
     }, true);
   }
 

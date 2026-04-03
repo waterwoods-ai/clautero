@@ -43,6 +43,38 @@ function appendTextNode(parent: HTMLElement, text: string): void {
   parent.appendChild(parent.ownerDocument.createTextNode(text));
 }
 
+/**
+ * Simple markdown-to-HTML converter for Claude responses.
+ * Handles: **bold**, *italic*, `code`, ```code blocks```, headers, lists, links.
+ */
+function markdownToHtml(md: string): string {
+  let html = md
+    // Code blocks (```...```)
+    .replace(/```(\w*)\n([\s\S]*?)```/g,
+      '<pre style="background:#f5f5f5;border-radius:6px;padding:8px 10px;overflow-x:auto;font-size:12px;margin:6px 0;"><code>$2</code></pre>')
+    // Inline code
+    .replace(/`([^`]+)`/g,
+      '<code style="background:#f0f0f0;border-radius:3px;padding:1px 4px;font-size:12px;">$1</code>')
+    // Headers
+    .replace(/^### (.+)$/gm, '<strong style="font-size:14px;display:block;margin:8px 0 4px;">$1</strong>')
+    .replace(/^## (.+)$/gm, '<strong style="font-size:15px;display:block;margin:10px 0 4px;">$1</strong>')
+    .replace(/^# (.+)$/gm, '<strong style="font-size:16px;display:block;margin:12px 0 4px;">$1</strong>')
+    // Bold
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    // Italic
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    // Unordered lists
+    .replace(/^- (.+)$/gm, '<li style="margin-left:16px;list-style:disc;">$1</li>')
+    // Ordered lists
+    .replace(/^\d+\. (.+)$/gm, '<li style="margin-left:16px;list-style:decimal;">$1</li>')
+    // Line breaks (double newline = paragraph)
+    .replace(/\n\n/g, '<br/><br/>')
+    // Single newlines
+    .replace(/\n/g, '<br/>');
+
+  return html;
+}
+
 function sanitizeAndAppendHtml(
   parent: HTMLElement,
   html: string
@@ -146,7 +178,9 @@ export function createMessageRenderer(messageArea: HTMLElement) {
 
   function appendTextChunk(content: string): void {
     const container = ensureTextContainer();
-    sanitizeAndAppendHtml(container, content);
+    // Convert markdown to HTML before rendering
+    const html = markdownToHtml(content);
+    sanitizeAndAppendHtml(container, html);
     autoScroll();
   }
 
