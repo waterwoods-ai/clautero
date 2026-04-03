@@ -225,6 +225,9 @@ export function initSidebarManager(
     btnContainer.appendChild(btn);
     sidenavBtn = btn;
     Zotero.log("[Clautero] Sidenav button injected", "info");
+
+    // Watch for clicks on other sidenav buttons to restore item content
+    watchOtherButtons();
   }
 
   // Poll for sidenav (it may not exist immediately)
@@ -267,6 +270,28 @@ export function initSidebarManager(
     if (sidenavBtn) {
       sidenavBtn.style.background = panelVisible ? "rgba(0,0,0,0.08)" : "";
     }
+  }
+
+  // When any OTHER sidenav button is clicked, hide our panel and restore content
+  function watchOtherButtons(): void {
+    const sidenav = doc.querySelector("item-pane-sidenav") as HTMLElement;
+    if (!sidenav) return;
+
+    sidenav.addEventListener("click", (e: Event) => {
+      const target = e.target as HTMLElement;
+      const btn = target.closest(".btn") as HTMLElement | null;
+      // If click is on a sidenav button that is NOT ours, hide our panel
+      if (btn && btn.id !== "clautero-sidenav-btn" && panelVisible) {
+        panelVisible = false;
+        (container as HTMLElement).style.cssText = "display:none;";
+        if (itemPaneContent) {
+          itemPaneContent.style.display = "";
+        }
+        if (sidenavBtn) {
+          sidenavBtn.style.background = "";
+        }
+      }
+    }, true);
   }
 
   // ── Keyboard shortcut: Cmd+Shift+C ──
