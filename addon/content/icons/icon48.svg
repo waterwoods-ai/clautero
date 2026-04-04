@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Chat bubble shape -->
+  <path d="M24 4C12.95 4 4 11.16 4 20c0 4.84 2.76 9.18 7.1 12.22L9 40l8.4-4.84C19.52 35.72 21.72 36 24 36c11.05 0 20-7.16 20-16S35.05 4 24 4z"
+        fill="#c47a4a"/>
+  <!-- Inner starburst (Claude-inspired) -->
+  <circle cx="24" cy="19" r="2" fill="white"/>
+  <g stroke="white" stroke-width="1.5" stroke-linecap="round">
+    <line x1="24" y1="12" x2="24" y2="14.5"/>
+    <line x1="24" y1="23.5" x2="24" y2="26"/>
+    <line x1="17.5" y1="19" x2="20" y2="19"/>
+    <line x1="28" y1="19" x2="30.5" y2="19"/>
+    <line x1="19.3" y1="14.3" x2="21.2" y2="16.2"/>
+    <line x1="26.8" y1="21.8" x2="28.7" y2="23.7"/>
+    <line x1="28.7" y1="14.3" x2="26.8" y2="16.2"/>
+    <line x1="21.2" y1="21.8" x2="19.3" y2="23.7"/>
+  </g>
+</svg>

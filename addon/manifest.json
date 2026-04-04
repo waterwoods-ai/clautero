@@ -6,8 +6,8 @@
   "author": "tom",
   "homepage_url": "https://github.com/tom/clautero",
   "icons": {
-    "48": "content/icons/icon48.png",
-    "96": "content/icons/icon96.png"
+    "48": "content/icons/icon48.svg",
+    "96": "content/icons/icon48.svg"
   },
   "applications": {
     "zotero": {
