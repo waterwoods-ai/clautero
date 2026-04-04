@@ -9,7 +9,7 @@ import { createClauteroService } from "./core/agent/ClauteroService";
 import { resolveCLIPath, clearCLIPathCache } from "./core/agent/CLIPathResolver";
 import type { StreamChunk } from "./core/agent/types";
 import { createContextChipsView } from "./modules/context/ContextChipsView";
-import { BUILT_IN_COMMANDS } from "./modules/commands/builtInCommands";
+import { BUILT_IN_COMMANDS, type SlashCommand } from "./modules/commands/builtInCommands";
 
 export interface Hooks {
   onStartup(): Promise<void>;
@@ -762,6 +762,68 @@ function doInitChat(
     });
   });
 
+  // ── Load Claude Code skills from filesystem ──
+  interface SkillInfo { name: string; description: string; source: string }
+  let allCommands: SkillInfo[] = [];
+
+  async function loadClaudeCodeSkills(): Promise<SkillInfo[]> {
+    const skills: SkillInfo[] = [];
+    try {
+      // Derive home directory from profile path
+      const profile = PathUtils.profileDir;
+      const parts = profile.split("/");
+      const homeIdx = parts.indexOf("Users");
+      let home = "";
+      if (homeIdx >= 0 && parts.length > homeIdx + 1) {
+        home = parts.slice(0, homeIdx + 2).join("/");
+      }
+      if (!home) return skills;
+
+      const skillsDir = PathUtils.join(home, ".claude", "skills");
+      const exists = await IOUtils.exists(skillsDir);
+      if (!exists) return skills;
+
+      const children = await IOUtils.getChildren(skillsDir);
+      for (const childPath of children) {
+        try {
+          const skillFile = PathUtils.join(childPath, "SKILL.md");
+          const fileExists = await IOUtils.exists(skillFile);
+          if (!fileExists) continue;
+
+          const content = await IOUtils.readUTF8(skillFile);
+          // Parse YAML frontmatter
+          const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+          if (!fmMatch) continue;
+
+          const fm = fmMatch[1];
+          const nameMatch = fm.match(/^name:\s*(.+)$/m);
+          const descMatch = fm.match(/^description:\s*(.+)$/m);
+
+          if (nameMatch) {
+            skills.push({
+              name: nameMatch[1].trim(),
+              description: (descMatch ? descMatch[1].trim() : "").slice(0, 80),
+              source: "claude-code",
+            });
+          }
+        } catch { /* skip bad skill files */ }
+      }
+    } catch (e) {
+      Zotero.log(`[Clautero] Failed to load Claude Code skills: ${e}`, "warning");
+    }
+    return skills;
+  }
+
+  // Load skills on init
+  loadClaudeCodeSkills().then(skills => {
+    // Combine built-in + Claude Code skills
+    const builtIn: SkillInfo[] = BUILT_IN_COMMANDS.map(c => ({
+      name: c.name, description: c.description, source: "clautero",
+    }));
+    allCommands = [...builtIn, ...skills];
+    Zotero.log(`[Clautero] Loaded ${skills.length} Claude Code skills, ${builtIn.length} built-in`, "info");
+  });
+
   // ── Slash command dropdown ──
   const cmdDropdown = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
   cmdDropdown.style.cssText = `
@@ -778,13 +840,13 @@ function doInitChat(
   }
 
   let cmdSelectedIdx = 0;
-  let cmdFiltered: typeof BUILT_IN_COMMANDS extends readonly (infer T)[] ? T[] : never = [];
+  let cmdFiltered: SkillInfo[] = [];
 
   function renderCmdDropdown(filter: string): void {
     const query = filter.toLowerCase();
-    cmdFiltered = BUILT_IN_COMMANDS.filter(c =>
+    cmdFiltered = allCommands.filter(c =>
       c.name.toLowerCase().includes(query)
-    ) as typeof cmdFiltered;
+    );
 
     while (cmdDropdown.firstChild) cmdDropdown.removeChild(cmdDropdown.firstChild);
 
@@ -810,7 +872,8 @@ function doInitChat(
 
       const descEl = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
       descEl.style.cssText = "font-size:11px;color:#888;margin-top:2px;";
-      descEl.textContent = cmd.description;
+      const sourceTag = cmd.source === "claude-code" ? `(${cmd.source}) ` : "";
+      descEl.textContent = `${sourceTag}${cmd.description}`;
 
       row.appendChild(nameEl);
       row.appendChild(descEl);
@@ -832,7 +895,7 @@ function doInitChat(
     }
   }
 
-  function selectCmd(cmd: typeof BUILT_IN_COMMANDS[number]): void {
+  function selectCmd(cmd: SkillInfo): void {
     textarea.value = `/${cmd.name} `;
     cmdDropdown.style.display = "none";
     textarea.focus();
@@ -875,27 +938,26 @@ function doInitChat(
     }
   }, true); // capture phase to intercept before InputController
 
-  // ── Send handler (with slash command expansion) ──
+  // ── Send handler (with slash command support) ──
   inputController.setOnSend(async (text: string) => {
+    hideCmdDropdown();
+
     // Check for slash command
     if (text.startsWith("/")) {
-      const parts = text.match(/^\/(\w+)\s*(.*)/);
+      const parts = text.match(/^\/(\S+)\s*(.*)/);
       if (parts) {
         const cmdName = parts[1];
         const cmdArgs = parts[2] || "";
-        const cmd = BUILT_IN_COMMANDS.find(c => c.name === cmdName);
-        if (cmd) {
-          hideCmdDropdown();
-          const session = getActiveSession();
-          if (!session) return;
 
-          if (cmd.type === "action") {
-            cmd.execute(cmdArgs, {
+        // Check built-in Clautero commands first
+        const builtIn = BUILT_IN_COMMANDS.find(c => c.name === cmdName);
+        if (builtIn) {
+          if (builtIn.type === "action") {
+            builtIn.execute(cmdArgs, {
               currentContext,
               clearConversation: () => {
-                // Trigger new conversation
-                const newConvBtns = sessionBar.querySelectorAll("button");
-                for (const b of Array.from(newConvBtns)) {
+                const btns = sessionBar.querySelectorAll("button");
+                for (const b of Array.from(btns)) {
                   if (b.getAttribute("title") === "New conversation") {
                     (b as HTMLElement).click();
                     break;
@@ -905,16 +967,15 @@ function doInitChat(
             });
             return;
           }
-
-          // Prompt type — expand and send
-          const expanded = cmd.execute(cmdArgs, { currentContext, clearConversation: () => {} });
+          // Prompt type — expand to full prompt
+          const expanded = builtIn.execute(cmdArgs, { currentContext, clearConversation: () => {} });
           if (expanded) {
             text = expanded;
           }
         }
+        // For Claude Code skills (/skill-name), send as-is — Claude CLI handles it
       }
     }
-    hideCmdDropdown();
     const session = getActiveSession();
     if (!session) return;
 
