@@ -32,6 +32,18 @@ async function startup({ id, version, resourceURI, rootURI }, _reason) {
       rootURI + "content/clautero.js"
     );
 
+    // Register preference pane
+    try {
+      Zotero.PreferencePanes.register({
+        pluginID: "clautero@zotero-plugin",
+        src: rootURI + "content/preferences.xhtml",
+        label: "Clautero",
+        image: rootURI + "content/icons/chat.svg",
+      });
+    } catch (e) {
+      // Zotero.PreferencePanes may not exist in older versions
+    }
+
     await Zotero.Clautero.hooks.onStartup();
 
     // If main windows are already open (runtime install/enable), trigger manually

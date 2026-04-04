@@ -6,6 +6,7 @@ import { createChatState, addMessage, type ChatStateData } from "./modules/chat/
 import { createMessageRenderer } from "./modules/chat/MessageRenderer";
 import { createStreamController } from "./modules/chat/StreamController";
 import { createClauteroService } from "./core/agent/ClauteroService";
+import { resolveCLIPath, clearCLIPathCache } from "./core/agent/CLIPathResolver";
 import type { StreamChunk } from "./core/agent/types";
 import { createContextChipsView } from "./modules/context/ContextChipsView";
 
@@ -19,13 +20,78 @@ export interface Hooks {
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const MAX_SESSIONS = 5;
 
-function resolveCliPath(): string {
-  try {
-    const pref = Zotero.Prefs.get("extensions.clautero.claudeCliPath", true) as string;
-    return pref || "/Users/tom/.local/share/claude/versions/2.1.90";
-  } catch {
-    return "/Users/tom/.local/share/claude/versions/2.1.90";
-  }
+async function resolveCliPath(): Promise<string> {
+  return resolveCLIPath();
+}
+
+function showSetupPrompt(session: Session, doc: Document): void {
+  const container = session.messageContainer;
+
+  // Don't show duplicate setup prompts
+  if (container.querySelector(".clautero-setup")) return;
+
+  const setup = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+  setup.className = "clautero-setup";
+  setup.style.cssText = `
+    padding:16px;margin:8px;border:1px solid #e0e0e0;border-radius:10px;
+    background:#fafafa;
+  `;
+
+  const title = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+  title.style.cssText = "font-weight:600;font-size:14px;margin-bottom:8px;";
+  title.textContent = "Configure Claude CLI Path";
+
+  const desc = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+  desc.style.cssText = "font-size:12px;color:#666;margin-bottom:12px;line-height:1.4;";
+  desc.textContent = 'Enter the full path to your Claude CLI binary. Find it by running "which claude" in your terminal.';
+
+  const inputRow = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+  inputRow.style.cssText = "display:flex;gap:6px;";
+
+  const input = doc.createElementNS(XHTML_NS, "input") as HTMLInputElement;
+  input.type = "text";
+  input.placeholder = "/Users/you/.local/bin/claude";
+  input.style.cssText = `
+    flex:1;border:1px solid #ccc;border-radius:6px;padding:6px 10px;
+    font-size:13px;font-family:monospace;outline:none;
+  `;
+
+  const saveBtn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
+  saveBtn.style.cssText = `
+    padding:6px 14px;border:none;border-radius:6px;cursor:pointer;
+    background:#3584e4;color:white;font-size:13px;font-weight:500;
+  `;
+  saveBtn.textContent = "Save";
+  saveBtn.addEventListener("click", () => {
+    const path = (input as HTMLInputElement).value.trim();
+    if (!path) return;
+
+    try {
+      Zotero.Prefs.set("extensions.clautero.claudeCliPath", path, true);
+      // Clear cached path so it picks up the new one
+      clearCLIPathCache();
+      // Remove setup prompt
+      setup.remove();
+      // Show confirmation
+      session.renderer.appendTextChunk("Claude CLI path saved. Send a message to start chatting!");
+      session.renderer.finishAssistantMessage();
+      Zotero.log(`[Clautero] CLI path configured: ${path}`, "info");
+    } catch (e) {
+      Zotero.log(`[Clautero] Failed to save CLI path: ${e}`, "error");
+    }
+  });
+
+  inputRow.appendChild(input);
+  inputRow.appendChild(saveBtn);
+  setup.appendChild(title);
+  setup.appendChild(desc);
+  setup.appendChild(inputRow);
+
+  // Remove welcome if present
+  const welcome = container.querySelector(".clautero-welcome");
+  if (welcome) welcome.remove();
+
+  container.appendChild(setup);
 }
 
 function isAutoAttachEnabled(): boolean {
@@ -333,9 +399,20 @@ function doInitChat(
 
     // Create service if needed
     if (!session.service) {
+      // Resolve CLI path (may throw if not configured)
+      let cliPath: string;
+      try {
+        cliPath = await resolveCliPath();
+      } catch (pathError) {
+        // Show inline setup prompt
+        showSetupPrompt(session, doc);
+        inputController.setDisabled(false);
+        return;
+      }
+
       session.service = createClauteroService({
         cwd: addon.workspaceDir,
-        cliPath: resolveCliPath(),
+        cliPath,
         onChunk: (chunk: StreamChunk) => {
           session.streamController.handleChunk(chunk);
 
