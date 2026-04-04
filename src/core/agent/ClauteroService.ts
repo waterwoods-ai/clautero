@@ -9,20 +9,30 @@ import { createSubprocessManager, cleanupOrphanedProcess } from "./SubprocessMan
 import { createMessageChannel } from "./MessageChannel";
 import { resolveCLIPath } from "./CLIPathResolver";
 
-const BASE_CLI_ARGS = [
-  "-p",
-  "--input-format",
-  "stream-json",
-  "--output-format",
-  "stream-json",
-  "--verbose",
-] as const;
+function getPermissionMode(): string {
+  try {
+    const mode = Zotero.Prefs.get(
+      "extensions.clautero.permissionMode", true
+    ) as string;
+    if (mode && ["acceptEdits", "plan", "bypassPermissions", "default", "auto"].includes(mode)) {
+      return mode;
+    }
+  } catch { /* ignore */ }
+  return "acceptEdits";
+}
 
-function buildCliArgs(sessionId?: string): readonly string[] {
+function buildCliArgs(sessionId?: string): string[] {
+  const args = [
+    "-p",
+    "--input-format", "stream-json",
+    "--output-format", "stream-json",
+    "--verbose",
+    "--permission-mode", getPermissionMode(),
+  ];
   if (sessionId) {
-    return [...BASE_CLI_ARGS, "--resume", sessionId];
+    args.push("--resume", sessionId);
   }
-  return [...BASE_CLI_ARGS];
+  return args;
 }
 
 function extractSessionInfo(chunk: StreamChunk): SessionInfo | null {

@@ -29,6 +29,20 @@
       Working directory for Claude. Leave empty to use default. Claude can read/write files here.
     </description>
 
+    <hbox align="center" style="margin-top: 8px;">
+      <label value="Permission Mode:" />
+      <html:select id="clautero-prefs-permission-mode"
+                   preference="extensions.clautero.permissionMode"
+                   style="margin-left: 8px;">
+        <html:option value="acceptEdits">Accept Edits (default)</html:option>
+        <html:option value="plan">Plan Mode (read-only)</html:option>
+        <html:option value="bypassPermissions">Bypass All (YOLO)</html:option>
+      </html:select>
+    </hbox>
+    <description style="font-size: 11px; color: #666; margin: 4px 0 12px 0;">
+      Controls what Claude can do. "Accept Edits" auto-approves file edits. "Bypass All" skips all permission checks.
+    </description>
+
     <checkbox id="clautero-prefs-auto-attach"
               label="Auto-attach selected item/collection as context"
               preference="extensions.clautero.autoAttachContext" />
