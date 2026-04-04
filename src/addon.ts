@@ -7,10 +7,7 @@ export class Addon {
   }
 
   get dataDir(): string {
-    return PathUtils.join(Zotero.DataDirectory.dir, "clautero");
-  }
-
-  get workspaceDir(): string {
+    // Try custom workspace first, then Zotero data dir, then temp fallback
     try {
       const custom = Zotero.Prefs.get(
         "extensions.clautero.workspaceDir", true
@@ -19,6 +16,16 @@ export class Addon {
         return custom.trim();
       }
     } catch { /* ignore */ }
+
+    try {
+      return PathUtils.join(Zotero.DataDirectory.dir, "clautero");
+    } catch {
+      // Fallback for paths with special characters
+      return PathUtils.join(PathUtils.tempDir, "clautero");
+    }
+  }
+
+  get workspaceDir(): string {
     return PathUtils.join(this.dataDir, "workspace");
   }
 
@@ -27,20 +34,26 @@ export class Addon {
   }
 
   get commandsDir(): string {
-    const customDir = Zotero.Prefs.get(
-      "extensions.clautero.commandsDir",
-      true
-    ) as string;
-    if (customDir) {
-      return customDir;
-    }
+    try {
+      const customDir = Zotero.Prefs.get(
+        "extensions.clautero.commandsDir", true
+      ) as string;
+      if (customDir && customDir.trim()) {
+        return customDir.trim();
+      }
+    } catch { /* ignore */ }
     return PathUtils.join(this.dataDir, "commands");
   }
 
   async ensureDirectories(): Promise<void> {
-    await IOUtils.makeDirectory(this.dataDir, { ignoreExisting: true });
-    await IOUtils.makeDirectory(this.workspaceDir, { ignoreExisting: true });
-    await IOUtils.makeDirectory(this.sessionsDir, { ignoreExisting: true });
-    await IOUtils.makeDirectory(this.commandsDir, { ignoreExisting: true });
+    const dirs = [this.dataDir, this.workspaceDir, this.sessionsDir, this.commandsDir];
+    for (const dir of dirs) {
+      try {
+        await IOUtils.makeDirectory(dir, { ignoreExisting: true });
+      } catch (e) {
+        Zotero.log(`[Clautero] Could not create directory ${dir}: ${e}`, "warning");
+        // Non-fatal — continue startup even if directories fail
+      }
+    }
   }
 }

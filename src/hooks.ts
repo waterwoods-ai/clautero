@@ -1104,7 +1104,12 @@ export function createHooks(addon: Addon): Hooks {
 
   return {
     async onStartup() {
-      await addon.ensureDirectories();
+      try {
+        await addon.ensureDirectories();
+      } catch (e) {
+        Zotero.log(`[Clautero] Directory setup warning: ${e}`, "warning");
+        // Non-fatal — continue startup
+      }
       Zotero.log("[Clautero] Plugin started", "info");
     },
 
