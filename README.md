@@ -28,7 +28,7 @@ You (Zotero) → Clautero (UI) → Claude Code CLI (Anthropic) → Claude API
 - **Thinking level** — Click to cycle Low / Medium / High / Ultra (maps to `--effort`)
 - **YOLO mode** — Toggle to bypass all permission checks (like Claudian)
 - **Context usage** — Shows token usage % after each response
-- **Keyboard shortcut** — `Cmd+Shift+C` (Mac) / `Ctrl+Shift+C` (Windows/Linux) to toggle
+- **Sidenav icon** — always-visible chat bubble in the right sidebar
 
 ## Requirements
 
@@ -127,9 +127,6 @@ npm run build
 - **Bold**, *italic*, `code`, and other markdown renders in real-time
 - 🔧 `ToolName` ✓ — shows tool usage with a green checkmark when complete
 - Code blocks render with syntax highlighting background
-
-**Keyboard shortcut:**
-- **Cmd+Shift+C** (macOS) / **Ctrl+Shift+C** (Windows/Linux) — toggle the chat panel
 
 ### Managing Sessions
 
