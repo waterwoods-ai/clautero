@@ -9,6 +9,7 @@ import { createClauteroService } from "./core/agent/ClauteroService";
 import { resolveCLIPath, clearCLIPathCache } from "./core/agent/CLIPathResolver";
 import type { StreamChunk } from "./core/agent/types";
 import { createContextChipsView } from "./modules/context/ContextChipsView";
+import { BUILT_IN_COMMANDS } from "./modules/commands/builtInCommands";
 
 export interface Hooks {
   onStartup(): Promise<void>;
@@ -761,8 +762,159 @@ function doInitChat(
     });
   });
 
-  // ── Send handler ──
+  // ── Slash command dropdown ──
+  const cmdDropdown = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+  cmdDropdown.style.cssText = `
+    display:none;position:absolute;bottom:100%;left:0;right:0;
+    background:#fff;border:1px solid #e0e0e0;border-radius:8px;
+    box-shadow:0 -4px 16px rgba(0,0,0,0.1);max-height:240px;overflow-y:auto;
+    z-index:200;margin-bottom:4px;
+  `;
+  // Insert dropdown relative to input area
+  const inputParent = textarea.parentElement as HTMLElement;
+  if (inputParent) {
+    inputParent.style.position = "relative";
+    inputParent.appendChild(cmdDropdown);
+  }
+
+  let cmdSelectedIdx = 0;
+  let cmdFiltered: typeof BUILT_IN_COMMANDS extends readonly (infer T)[] ? T[] : never = [];
+
+  function renderCmdDropdown(filter: string): void {
+    const query = filter.toLowerCase();
+    cmdFiltered = BUILT_IN_COMMANDS.filter(c =>
+      c.name.toLowerCase().includes(query)
+    ) as typeof cmdFiltered;
+
+    while (cmdDropdown.firstChild) cmdDropdown.removeChild(cmdDropdown.firstChild);
+
+    if (cmdFiltered.length === 0) {
+      cmdDropdown.style.display = "none";
+      return;
+    }
+
+    cmdSelectedIdx = 0;
+    cmdDropdown.style.display = "block";
+
+    for (let i = 0; i < cmdFiltered.length; i++) {
+      const cmd = cmdFiltered[i];
+      const row = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+      row.style.cssText = `
+        padding:8px 12px;cursor:pointer;
+        ${i === cmdSelectedIdx ? "background:#f0f0f0;" : ""}
+      `;
+
+      const nameEl = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+      nameEl.style.cssText = "font-weight:500;font-size:13px;color:#333;";
+      nameEl.textContent = `/${cmd.name}`;
+
+      const descEl = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+      descEl.style.cssText = "font-size:11px;color:#888;margin-top:2px;";
+      descEl.textContent = cmd.description;
+
+      row.appendChild(nameEl);
+      row.appendChild(descEl);
+
+      row.addEventListener("mouseenter", () => {
+        cmdSelectedIdx = i;
+        highlightCmdRow();
+      });
+      row.addEventListener("click", () => selectCmd(cmd));
+
+      cmdDropdown.appendChild(row);
+    }
+  }
+
+  function highlightCmdRow(): void {
+    const rows = cmdDropdown.children;
+    for (let i = 0; i < rows.length; i++) {
+      (rows[i] as HTMLElement).style.background = i === cmdSelectedIdx ? "#f0f0f0" : "";
+    }
+  }
+
+  function selectCmd(cmd: typeof BUILT_IN_COMMANDS[number]): void {
+    textarea.value = `/${cmd.name} `;
+    cmdDropdown.style.display = "none";
+    textarea.focus();
+  }
+
+  function hideCmdDropdown(): void {
+    cmdDropdown.style.display = "none";
+  }
+
+  // Listen for input to show/hide slash command dropdown
+  textarea.addEventListener("input", () => {
+    const val = textarea.value;
+    if (val.startsWith("/") && !val.includes("\n")) {
+      const query = val.slice(1).split(" ")[0] || "";
+      renderCmdDropdown(query);
+    } else {
+      hideCmdDropdown();
+    }
+  });
+
+  // Arrow keys + Enter for dropdown navigation
+  textarea.addEventListener("keydown", (e: Event) => {
+    const ke = e as KeyboardEvent;
+    if (cmdDropdown.style.display === "none") return;
+
+    if (ke.key === "ArrowUp") {
+      ke.preventDefault();
+      cmdSelectedIdx = Math.max(0, cmdSelectedIdx - 1);
+      highlightCmdRow();
+    } else if (ke.key === "ArrowDown") {
+      ke.preventDefault();
+      cmdSelectedIdx = Math.min(cmdFiltered.length - 1, cmdSelectedIdx + 1);
+      highlightCmdRow();
+    } else if (ke.key === "Enter" && !ke.shiftKey && cmdFiltered.length > 0) {
+      ke.preventDefault();
+      ke.stopPropagation();
+      selectCmd(cmdFiltered[cmdSelectedIdx]);
+    } else if (ke.key === "Escape") {
+      hideCmdDropdown();
+    }
+  }, true); // capture phase to intercept before InputController
+
+  // ── Send handler (with slash command expansion) ──
   inputController.setOnSend(async (text: string) => {
+    // Check for slash command
+    if (text.startsWith("/")) {
+      const parts = text.match(/^\/(\w+)\s*(.*)/);
+      if (parts) {
+        const cmdName = parts[1];
+        const cmdArgs = parts[2] || "";
+        const cmd = BUILT_IN_COMMANDS.find(c => c.name === cmdName);
+        if (cmd) {
+          hideCmdDropdown();
+          const session = getActiveSession();
+          if (!session) return;
+
+          if (cmd.type === "action") {
+            cmd.execute(cmdArgs, {
+              currentContext,
+              clearConversation: () => {
+                // Trigger new conversation
+                const newConvBtns = sessionBar.querySelectorAll("button");
+                for (const b of Array.from(newConvBtns)) {
+                  if (b.getAttribute("title") === "New conversation") {
+                    (b as HTMLElement).click();
+                    break;
+                  }
+                }
+              },
+            });
+            return;
+          }
+
+          // Prompt type — expand and send
+          const expanded = cmd.execute(cmdArgs, { currentContext, clearConversation: () => {} });
+          if (expanded) {
+            text = expanded;
+          }
+        }
+      }
+    }
+    hideCmdDropdown();
     const session = getActiveSession();
     if (!session) return;
 
