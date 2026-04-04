@@ -221,15 +221,15 @@ export function initSidebarManager(
     return true;
   }
 
-  let injectPoll = 0;
+  // Keep trying to inject panel — Zotero may rebuild the pane
   const injectTimer = (win as any).setInterval(() => {
-    injectPoll++;
-    if (injectPoll > 60) { (win as any).clearInterval(injectTimer); return; }
     if (!injected) {
       injected = injectPanel();
-      if (injected) (win as any).clearInterval(injectTimer);
+    } else if (!container.parentElement) {
+      // Panel was removed (Zotero rebuilt pane) — re-inject
+      injected = false;
     }
-  }, 500);
+  }, 2000);
   cleanups.push(() => (win as any).clearInterval(injectTimer));
 
   // ══════════════════════════════════════════════
@@ -263,13 +263,14 @@ export function initSidebarManager(
     Zotero.log("[Clautero] Sidenav button injected", "info");
   }
 
-  let pollCount = 0;
+  // Keep polling forever — Zotero may rebuild the sidenav at any time
+  // (e.g., on tab switch, window resize, item pane refresh) which
+  // destroys our injected button. Re-inject when it disappears.
   const pollTimer = (win as any).setInterval(() => {
-    pollCount++;
-    if (pollCount > 60) { (win as any).clearInterval(pollTimer); return; }
-    if (!doc.getElementById("clautero-sidenav-btn")) injectSidenavButton();
-    else (win as any).clearInterval(pollTimer);
-  }, 500);
+    if (!doc.getElementById("clautero-sidenav-btn")) {
+      injectSidenavButton();
+    }
+  }, 2000);
   cleanups.push(() => (win as any).clearInterval(pollTimer));
 
   // ══════════════════════════════════════════════
