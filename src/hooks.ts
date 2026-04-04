@@ -605,6 +605,62 @@ function doInitChat(
       sessionBar.appendChild(addBtn);
     }
 
+    // [✎] new conversation button (clears current tab)
+    const newConvBtn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
+    newConvBtn.style.cssText = `
+      width:24px;height:24px;border-radius:4px;cursor:pointer;
+      font-size:13px;border:1px solid #ddd;background:transparent;color:#888;
+    `;
+    newConvBtn.textContent = "\u270E";
+    newConvBtn.setAttribute("title", "New conversation");
+    newConvBtn.addEventListener("click", () => {
+      const current = getActiveSession();
+      if (!current) return;
+
+      // Save current to history if it has messages
+      if (current.chatState.messages.length > 0) {
+        saveSessionToHistory(current);
+      }
+
+      // Stop current service
+      current.service?.cleanup();
+      current.service = null;
+
+      // Reset chat state
+      current.chatState = createChatState();
+
+      // Clear and rebuild message container
+      while (current.messageContainer.firstChild) {
+        current.messageContainer.removeChild(current.messageContainer.firstChild);
+      }
+
+      // Add welcome back
+      const welcome = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+      welcome.className = "clautero-welcome";
+      welcome.style.cssText = "display:flex;align-items:center;justify-content:center;height:100%;";
+      const greet = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
+      greet.style.cssText = "font-size:22px;font-weight:400;color:#1a1a1a;font-family:Georgia,serif;text-align:center;";
+      greet.textContent = "Ask Claude about\nyour research";
+      welcome.appendChild(greet);
+      current.messageContainer.appendChild(welcome);
+
+      // Reset renderer
+      current.renderer.cleanup();
+      current.renderer = createMessageRenderer(current.messageContainer);
+      current.streamController.cleanup();
+      current.streamController = createStreamController(
+        current.renderer,
+        () => current.chatState,
+        (next: ChatStateData) => { current.chatState = next; }
+      );
+
+      // Reset context usage
+      updateContextUsage(0);
+
+      Zotero.log("[Clautero] New conversation started", "info");
+    });
+    sessionBar.appendChild(newConvBtn);
+
     // [🕐] history button
     const histBtn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
     histBtn.style.cssText = `
