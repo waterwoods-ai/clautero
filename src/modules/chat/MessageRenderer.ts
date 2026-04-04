@@ -59,14 +59,16 @@ function markdownToHtml(md: string): string {
     .replace(/^### (.+)$/gm, '<strong style="font-size:14px;display:block;margin:8px 0 4px;">$1</strong>')
     .replace(/^## (.+)$/gm, '<strong style="font-size:15px;display:block;margin:10px 0 4px;">$1</strong>')
     .replace(/^# (.+)$/gm, '<strong style="font-size:16px;display:block;margin:12px 0 4px;">$1</strong>')
-    // Bold
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    // Italic
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    // Bold (allow spanning across newlines)
+    .replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>')
+    // Italic (single line only to avoid false matches)
+    .replace(/(?<!\*)\*([^\*\n]+?)\*(?!\*)/g, '<em>$1</em>')
     // Unordered lists
     .replace(/^- (.+)$/gm, '<li style="margin-left:16px;list-style:disc;">$1</li>')
     // Ordered lists
     .replace(/^\d+\. (.+)$/gm, '<li style="margin-left:16px;list-style:decimal;">$1</li>')
+    // Horizontal rule
+    .replace(/^---+$/gm, '<hr style="border:none;border-top:1px solid #e0e0e0;margin:12px 0;"/>')
     // Line breaks (double newline = paragraph)
     .replace(/\n\n/g, '<br/><br/>')
     // Single newlines
@@ -184,6 +186,7 @@ export function createMessageRenderer(messageArea: HTMLElement) {
 
   function ensureAssistantBubble(): HTMLElement {
     if (!currentAssistantBubble) {
+      rawTextBuffer = ""; // Reset buffer for new assistant message
       const bubble = createEl(
         doc, "div", "clautero-msg clautero-msg-assistant"
       );
@@ -208,10 +211,17 @@ export function createMessageRenderer(messageArea: HTMLElement) {
     return currentTextContainer as HTMLElement;
   }
 
+  // Accumulate raw text so markdown renders correctly across chunk boundaries
+  let rawTextBuffer = "";
+
   function appendTextChunk(content: string): void {
     const container = ensureTextContainer();
-    // Convert markdown to HTML before rendering
-    const html = markdownToHtml(content);
+    rawTextBuffer += content;
+
+    // Re-render the full accumulated text as markdown
+    // This ensures **bold** spanning across chunks renders correctly
+    while (container.firstChild) container.removeChild(container.firstChild);
+    const html = markdownToHtml(rawTextBuffer);
     sanitizeAndAppendHtml(container, html);
     autoScroll();
   }
@@ -260,6 +270,7 @@ export function createMessageRenderer(messageArea: HTMLElement) {
       thinkingSummaryEl = null;
     }
     currentTextContainer = null;
+    rawTextBuffer = ""; // Reset so post-thinking text starts fresh
   }
 
   function renderToolUseStart(toolName: string, args: string): void {
