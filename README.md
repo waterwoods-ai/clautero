@@ -47,13 +47,27 @@ You (Zotero) → Clautero (UI) → Claude Code CLI (Anthropic) → Claude API
 
 Open **Zotero → Settings → Clautero** to configure:
 
-| Setting | Description |
-|---------|-------------|
-| **Claude CLI Path** | Full path to the `claude` binary (e.g., `/Users/you/.local/bin/claude`). Run `which claude` in your terminal to find it. |
-| **Workspace Directory** | Working directory for Claude. Leave empty for default. Claude can read/write files here. |
-| **Permission Mode** | Controls what Claude can do: **Accept Edits** (default, auto-approves file edits), **Plan Mode** (read-only), **Bypass All** (YOLO, skips all checks). |
-| **Auto-attach Context** | Automatically attach selected item or collection as context. |
-| **Max Context Length** | Maximum characters for context sent to Claude (default: 50,000). |
+### macOS
+
+![Settings macOS](docs/settings-mac.png)
+
+### Windows
+
+![Settings Windows](docs/settings-windows.png)
+
+| Setting | macOS Example | Windows Example |
+|---------|--------------|----------------|
+| **Claude CLI Path** | `/Users/tom/.local/bin/claude` | `C:\Users\TomYANG\.local\bin\claude.exe` |
+| **Workspace Directory** | `/Users/tom/Documents/Zotero` | `C:\Users\TomYANG\Documents\Zotero\workspace` |
+| **Permission Mode** | Accept Edits / Plan Mode / Bypass All (YOLO) | Same |
+| **Auto-attach Context** | ✅ Enabled | ✅ Enabled |
+| **Max Context Length** | 50000 | 50000 |
+
+> **Finding the Claude CLI path:**
+> - **macOS/Linux:** Run `which claude` in Terminal
+> - **Windows:** Run `where claude` in Command Prompt
+>
+> **Important:** The path must include the filename (`claude` or `claude.exe`), not just the directory. On Windows, avoid paths with special characters (e.g., OneDrive folders with spaces) — use a simple workspace path like `C:\Users\You\Documents\Zotero\workspace`.
 
 ### Status Bar Controls
 
