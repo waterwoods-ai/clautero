@@ -101,17 +101,58 @@ npm run build
 
 ## Usage
 
-1. Click the **chat bubble icon** in Zotero's right sidebar
-2. **Select a paper** — its metadata and PDF are attached as context
-3. **Select a folder** — all papers become context
-4. Type a message and press **Enter** to send
-5. Type `/` to see available slash commands
+### Getting Started
+
+1. Click the **chat bubble icon** (●) in Zotero's right sidebar navigation
+2. The Clautero chat panel opens in the item pane area
+3. Type a message in the input field and press **Enter** to send
+4. Claude Code processes your request and streams the response in real-time
+
+### Working with Papers
+
+- **Select a paper** in your library — its metadata (title, authors, abstract, DOI) and PDF path are automatically attached as context
+- **Select a collection/folder** — all papers in the folder become context, so you can ask questions across multiple papers
+- The context chip appears above the input field (e.g., `📄 Smith2024.pdf` or `📁 My Collection (6 papers)`)
+- Click `×` on a chip to remove the context
+
+### Chat Interface
+
+**Sending messages:**
+- Type in the pill-shaped input field at the bottom
+- Press **Enter** to send, **Shift+Enter** for a new line
+- The input auto-expands as you type (up to 4 lines)
+
+**Streaming responses:**
+- *Thought for 3s* — shows in coral italic while Claude thinks, with elapsed time
+- **Bold**, *italic*, `code`, and other markdown renders in real-time
+- 🔧 `ToolName` ✓ — shows tool usage with a green checkmark when complete
+- Code blocks render with syntax highlighting background
+
+**Keyboard shortcut:**
+- **Cmd+Shift+C** (macOS) / **Ctrl+Shift+C** (Windows/Linux) — toggle the chat panel
+
+### Managing Sessions
+
+- **Session tabs** `[1] [2] [3]` — each tab is an independent conversation with its own Claude instance
+- **⊞** — create a new tab (max 5 concurrent sessions)
+- **✎** — start a new conversation in the current tab (saves the current chat to history first)
+- **⧗** — browse past conversations from chat history
+- Sessions **auto-save** after each Claude response and persist across Zotero restarts
+
+### Status Bar
+
+The bottom bar provides quick controls:
+
+- **Click the model name** (e.g., `sonnet`) to cycle: sonnet → opus → haiku
+- **Click `Thinking: Low`** to cycle effort level: Low → Medium → High → Ultra
+- **◑ N%** shows context window usage after each response
+- **Click `YOLO`** to toggle bypass permissions mode (red ● = on)
 
 ### Slash Commands
 
-Type `/` in the input to see all available commands:
+Type `/` in the input to see a dropdown of all available commands:
 
-**Built-in:**
+**Built-in Clautero commands:**
 - `/summarize` — summarize the attached paper
 - `/explain [topic]` — explain a concept in context
 - `/related` — suggest related papers
