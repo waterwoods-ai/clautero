@@ -47,6 +47,10 @@ export function createStreamController(
 
   function handleTextChunk(chunk: StreamChunk): void {
     if (controllerState.phase !== "text") {
+      // Close thinking block if transitioning from thinking → text
+      if (controllerState.phase === "thinking") {
+        renderer.renderThinkingEnd();
+      }
       transitionPhase("text");
     }
     setState(updateLastMessage(getState(), chunk));
