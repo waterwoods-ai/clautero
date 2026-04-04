@@ -11,11 +11,11 @@
       <label value="Claude CLI Path:" />
       <html:input type="text" id="clautero-prefs-cli-path"
                   preference="extensions.clautero.claudeCliPath"
-                  placeholder="/path/to/claude"
+                  placeholder="/path/to/claude or C:\path\to\claude.exe"
                   style="flex: 1; font-family: monospace;" />
     </hbox>
     <description style="font-size: 11px; color: #666; margin: 4px 0 12px 0;">
-      Full path to the Claude CLI binary. Run "which claude" in terminal to find it.
+      Full path to the Claude CLI executable. Mac/Linux: run "which claude". Windows: run "where claude" in terminal. Must include filename (e.g., claude or claude.exe).
     </description>
 
     <hbox align="center" style="margin-top: 8px;">

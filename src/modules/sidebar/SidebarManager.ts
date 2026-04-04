@@ -314,7 +314,8 @@ export function initSidebarManager(
   // ── Keyboard shortcut ──
   const keyHandler = (e: Event) => {
     const ke = e as KeyboardEvent;
-    const mod = navigator.platform.includes("Mac") ? ke.metaKey : ke.ctrlKey;
+    const isMac = (typeof Zotero !== "undefined" && Zotero.isMac) || false;
+    const mod = isMac ? ke.metaKey : ke.ctrlKey;
     if (mod && ke.shiftKey && ke.key === "C") { ke.preventDefault(); togglePanel(); }
   };
   win.addEventListener("keydown", keyHandler, true);

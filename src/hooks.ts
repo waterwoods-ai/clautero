@@ -44,7 +44,7 @@ function showSetupPrompt(session: Session, doc: Document): void {
 
   const desc = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
   desc.style.cssText = "font-size:12px;color:#666;margin-bottom:12px;line-height:1.4;";
-  desc.textContent = 'Enter the full path to your Claude CLI binary. Find it by running "which claude" in your terminal.';
+  desc.textContent = 'Enter the full path to your Claude CLI executable. Mac/Linux: run "which claude". Windows: run "where claude". Must include filename (e.g., /usr/local/bin/claude or C:\\Users\\You\\.local\\bin\\claude.exe).';
 
   const inputRow = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
   inputRow.style.cssText = "display:flex;gap:6px;";
@@ -769,13 +769,21 @@ function doInitChat(
   async function loadClaudeCodeSkills(): Promise<SkillInfo[]> {
     const skills: SkillInfo[] = [];
     try {
-      // Derive home directory from profile path
+      // Derive home directory from profile path (cross-platform)
       const profile = PathUtils.profileDir;
-      const parts = profile.split("/");
+      // Split on both / and \ to handle macOS/Linux and Windows
+      const parts = profile.split(/[/\\]/);
       const homeIdx = parts.indexOf("Users");
       let home = "";
       if (homeIdx >= 0 && parts.length > homeIdx + 1) {
-        home = parts.slice(0, homeIdx + 2).join("/");
+        // Use PathUtils.join to reconstruct with correct separators
+        // On Windows: C:\Users\Name, on Mac: /Users/Name
+        const sep = profile.includes("\\") ? "\\" : "/";
+        home = parts.slice(0, homeIdx + 2).join(sep);
+        // Windows drive letter fix: if first part is empty (from leading /), skip it
+        if (!parts[0] && sep === "/") {
+          home = "/" + parts.slice(1, homeIdx + 2).join(sep);
+        }
       }
       if (!home) return skills;
 
