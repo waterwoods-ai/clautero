@@ -7,6 +7,20 @@ export class Addon {
     this.rootURI = rootURI;
   }
 
+  /**
+   * Join path segments. PathUtils.join fails on Windows with OneDrive paths
+   * containing special characters. Fall back to string concatenation.
+   */
+  private safePath(...parts: string[]): string {
+    try {
+      return PathUtils.join(...parts);
+    } catch {
+      // Fallback: detect separator and join manually
+      const sep = parts[0]?.includes("\\") ? "\\" : "/";
+      return parts.join(sep);
+    }
+  }
+
   get dataDir(): string {
     if (this._dataDir) return this._dataDir;
 
@@ -21,46 +35,30 @@ export class Addon {
       }
     } catch { /* ignore */ }
 
-    // Try Zotero data dir
+    // Try Zotero profile dir (usually simple path without OneDrive)
     try {
-      const dir = PathUtils.join(Zotero.DataDirectory.dir, "clautero");
-      this._dataDir = dir;
-      return dir;
-    } catch { /* PathUtils.join may fail on Windows with special chars */ }
-
-    // Try profile dir (usually simpler path)
-    try {
-      const dir = PathUtils.join(PathUtils.profileDir, "clautero");
+      const dir = this.safePath(PathUtils.profileDir, "clautero");
       this._dataDir = dir;
       return dir;
     } catch { /* ignore */ }
 
-    // Last resort: temp dir
+    // Try temp dir
     try {
-      const dir = PathUtils.join(PathUtils.tempDir, "clautero");
+      const dir = this.safePath(PathUtils.tempDir, "clautero");
       this._dataDir = dir;
       return dir;
     } catch {
-      // Absolute last resort — hardcode a simple path
       this._dataDir = "C:\\Temp\\clautero";
       return this._dataDir;
     }
   }
 
   get workspaceDir(): string {
-    try {
-      return PathUtils.join(this.dataDir, "workspace");
-    } catch {
-      return this.dataDir;
-    }
+    return this.safePath(this.dataDir, "workspace");
   }
 
   get sessionsDir(): string {
-    try {
-      return PathUtils.join(this.dataDir, "sessions");
-    } catch {
-      return this.dataDir;
-    }
+    return this.safePath(this.dataDir, "sessions");
   }
 
   get commandsDir(): string {
@@ -72,11 +70,7 @@ export class Addon {
         return customDir.trim();
       }
     } catch { /* ignore */ }
-    try {
-      return PathUtils.join(this.dataDir, "commands");
-    } catch {
-      return this.dataDir;
-    }
+    return this.safePath(this.dataDir, "commands");
   }
 
   async ensureDirectories(): Promise<void> {
@@ -85,7 +79,7 @@ export class Addon {
       try {
         await IOUtils.makeDirectory(dir, { ignoreExisting: true });
       } catch (e) {
-        Zotero.log(`[Clautero] Could not create directory ${dir}: ${e}`, "warning");
+        Zotero.log(`[Clautero] Could not create ${dir}: ${e}`, "warning");
       }
     }
   }
