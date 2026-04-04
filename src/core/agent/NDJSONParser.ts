@@ -80,18 +80,12 @@ function parseRawMessage(raw: Record<string, unknown>): StreamChunk[] {
 
   if (type === "result") {
     const result = typeof raw.result === "string" ? raw.result : "";
-    const sessionId = raw.session_id ?? raw.sessionId;
+    // Pass full raw metadata — includes usage, modelUsage, session_id, cost, etc.
     return [
       {
         type: "result",
         content: result,
-        metadata: {
-          session_id: sessionId,
-          subtype: raw.subtype,
-          is_error: raw.is_error,
-          duration_ms: raw.duration_ms,
-          num_turns: raw.num_turns,
-        } as Readonly<Record<string, unknown>>,
+        metadata: raw as Readonly<Record<string, unknown>>,
       },
     ];
   }

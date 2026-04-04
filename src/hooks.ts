@@ -196,11 +196,10 @@ function doInitChat(
   });
 
   // ── Context usage update ──
-  let totalTokens = 0;
-  const CONTEXT_WINDOW = 200000;
-  function updateContextUsage(inputTokens: number, outputTokens: number): void {
-    totalTokens = inputTokens + outputTokens;
-    const pct = Math.min(100, Math.round((totalTokens / CONTEXT_WINDOW) * 100));
+  const CONTEXT_WINDOW = 200000; // default fallback
+  function updateContextUsage(usedTokens: number, ctxWindow?: number): void {
+    const window = ctxWindow || CONTEXT_WINDOW;
+    const pct = Math.min(100, Math.round((usedTokens / window) * 100));
     contextPct.textContent = `\u25D1 ${pct}%`;
   }
 
@@ -669,10 +668,29 @@ function doInitChat(
           // Update context usage from result metadata
           if (chunk.type === "result") {
             const meta = chunk.metadata ?? {};
-            const inputT = typeof meta.input_tokens === "number" ? meta.input_tokens : 0;
-            const outputT = typeof meta.output_tokens === "number" ? meta.output_tokens : 0;
-            if (inputT > 0 || outputT > 0) {
-              updateContextUsage(inputT, outputT);
+
+            // Token counts are nested under usage.input_tokens / usage.output_tokens
+            const usage = meta.usage as Record<string, unknown> | undefined;
+            if (usage) {
+              const inputT = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
+              const outputT = typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
+              const cacheT = typeof usage.cache_creation_input_tokens === "number"
+                ? usage.cache_creation_input_tokens : 0;
+              const cacheReadT = typeof usage.cache_read_input_tokens === "number"
+                ? usage.cache_read_input_tokens : 0;
+              const total = inputT + outputT + cacheT + cacheReadT;
+              if (total > 0) {
+                // Get actual context window from modelUsage if available
+                let contextWindow = CONTEXT_WINDOW;
+                const modelUsage = meta.modelUsage as Record<string, any> | undefined;
+                if (modelUsage) {
+                  const firstModel = Object.values(modelUsage)[0];
+                  if (firstModel && typeof firstModel.contextWindow === "number") {
+                    contextWindow = firstModel.contextWindow;
+                  }
+                }
+                updateContextUsage(total, contextWindow);
+              }
             }
           }
 
