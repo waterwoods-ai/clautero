@@ -75,7 +75,68 @@ function parseRawMessage(raw: Record<string, unknown>): StreamChunk[] {
   const type = raw.type as string;
 
   if (type === "assistant") {
-    return extractTextFromAssistant(raw);
+    // When --include-partial-messages is enabled, "assistant" messages are
+    // intermediate snapshots. We get real-time content from stream_event
+    // deltas instead, so skip "assistant" to avoid duplication.
+    // The final complete text comes in the "result" message.
+    return [];
+  }
+
+  // Handle stream_event (from --include-partial-messages)
+  // These give real-time thinking/text/tool_use deltas
+  if (type === "stream_event") {
+    const event = raw.event as Record<string, unknown> | undefined;
+    if (!event) return [];
+
+    const eventType = event.type as string;
+
+    // Thinking block start
+    if (eventType === "content_block_start") {
+      const block = event.content_block as Record<string, unknown> | undefined;
+      if (block?.type === "thinking") {
+        return [{ type: "thinking", content: "", metadata: raw as Readonly<Record<string, unknown>> }];
+      }
+      if (block?.type === "tool_use") {
+        const name = block.name as string || "unknown";
+        return [{
+          type: "tool_use",
+          content: JSON.stringify({ name, input: {} }),
+          metadata: { ...raw, tool_name: name } as Readonly<Record<string, unknown>>,
+        }];
+      }
+      return [];
+    }
+
+    // Thinking delta — streaming thinking text
+    if (eventType === "content_block_delta") {
+      const delta = event.delta as Record<string, unknown> | undefined;
+      if (!delta) return [];
+
+      if (delta.type === "thinking_delta") {
+        const text = typeof delta.thinking === "string" ? delta.thinking : "";
+        if (text) {
+          return [{ type: "thinking", content: text, metadata: raw as Readonly<Record<string, unknown>> }];
+        }
+      }
+
+      if (delta.type === "text_delta") {
+        const text = typeof delta.text === "string" ? delta.text : "";
+        if (text) {
+          return [{ type: "text", content: text, metadata: raw as Readonly<Record<string, unknown>> }];
+        }
+      }
+
+      if (delta.type === "input_json_delta") {
+        // Tool input streaming — skip for now
+        return [];
+      }
+
+      return [];
+    }
+
+    // content_block_stop, message_delta, message_stop — skip
+    // (final data comes in the "assistant" and "result" messages)
+    return [];
   }
 
   if (type === "result") {

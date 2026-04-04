@@ -26,6 +26,7 @@ function buildCliArgs(sessionId?: string): string[] {
     "--input-format", "stream-json",
     "--output-format", "stream-json",
     "--verbose",
+    "--include-partial-messages",
     "--permission-mode", permissionMode,
     "--model", model,
     "--effort", effort,

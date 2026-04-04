@@ -216,20 +216,27 @@ export function createMessageRenderer(messageArea: HTMLElement) {
     autoScroll();
   }
 
+  let thinkingStartTime = 0;
+  let thinkingSummaryEl: HTMLElement | null = null;
+
   function renderThinkingStart(): void {
     const bubble = ensureAssistantBubble();
+    thinkingStartTime = Date.now();
+
     const details = createEl(doc, "details", "clautero-thinking");
-    details.style.cssText = "border-left:2px solid #e0e0e0;padding-left:10px;margin:4px 0;";
+    details.style.cssText = "margin:4px 0 8px;";
+
     const summary = createEl(doc, "summary", "clautero-thinking-summary");
-    summary.style.cssText = "font-size:12px;color:#888;cursor:pointer;";
+    summary.style.cssText = "font-size:13px;color:#c47a4a;cursor:pointer;font-style:italic;";
     appendTextNode(summary, "Thinking\u2026");
+    thinkingSummaryEl = summary;
     details.appendChild(summary);
 
     const body = createEl(doc, "div", "clautero-thinking-body");
+    body.style.cssText = "font-size:12px;color:#888;padding:4px 0;line-height:1.4;";
     details.appendChild(body);
     bubble.appendChild(details);
 
-    // Reset text container so subsequent text goes into the thinking body
     currentTextContainer = body;
     autoScroll();
   }
@@ -244,7 +251,14 @@ export function createMessageRenderer(messageArea: HTMLElement) {
   }
 
   function renderThinkingEnd(): void {
-    // Close off thinking block; next text starts a fresh container
+    // Update summary to show duration: "Thought for Xs"
+    if (thinkingSummaryEl && thinkingStartTime > 0) {
+      const elapsed = Math.round((Date.now() - thinkingStartTime) / 1000);
+      while (thinkingSummaryEl.firstChild) thinkingSummaryEl.removeChild(thinkingSummaryEl.firstChild);
+      appendTextNode(thinkingSummaryEl, `Thought for ${elapsed}s`);
+      thinkingStartTime = 0;
+      thinkingSummaryEl = null;
+    }
     currentTextContainer = null;
   }
 
@@ -253,8 +267,18 @@ export function createMessageRenderer(messageArea: HTMLElement) {
     const details = createEl(doc, "details", "clautero-tool-use");
     details.style.cssText = "background:#f8f8f8;border-radius:8px;padding:6px 10px;margin:4px 0;";
     const summary = createEl(doc, "summary", "clautero-tool-summary");
-    summary.style.cssText = "font-size:12px;color:#666;cursor:pointer;font-weight:500;";
-    appendTextNode(summary, `Tool: ${toolName}`);
+    summary.style.cssText = "font-size:13px;color:#666;cursor:pointer;display:flex;align-items:center;gap:4px;";
+
+    // Tool icon + name + checkmark (like Claudian)
+    const iconSpan = createEl(doc, "span");
+    iconSpan.style.cssText = "font-size:14px;";
+    appendTextNode(iconSpan, "\uD83D\uDD27"); // wrench icon
+    summary.appendChild(iconSpan);
+
+    const nameSpan = createEl(doc, "span");
+    nameSpan.style.cssText = "font-family:monospace;font-size:12px;";
+    appendTextNode(nameSpan, toolName);
+    summary.appendChild(nameSpan);
     details.appendChild(summary);
 
     const argsBlock = createEl(doc, "pre", "clautero-tool-args");
@@ -269,12 +293,21 @@ export function createMessageRenderer(messageArea: HTMLElement) {
 
   function renderToolResult(content: string): void {
     const bubble = ensureAssistantBubble();
-    // Find the last tool-use details element
     const toolDetails = bubble.querySelector(
       ".clautero-tool-use:last-of-type"
     );
     if (toolDetails) {
+      // Add checkmark to summary (like Claudian)
+      const summary = toolDetails.querySelector("summary");
+      if (summary) {
+        const check = createEl(doc, "span");
+        check.style.cssText = "color:#27ae60;margin-left:4px;";
+        appendTextNode(check, "\u2713");
+        summary.appendChild(check);
+      }
+
       const resultBlock = createEl(doc, "pre", "clautero-tool-result");
+      resultBlock.style.cssText = "font-size:11px;color:#888;overflow-x:auto;margin:4px 0;white-space:pre-wrap;";
       appendTextNode(resultBlock, content);
       toolDetails.appendChild(resultBlock);
     }
