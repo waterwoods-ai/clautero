@@ -216,12 +216,13 @@ function doInitChat(
       if (messages.length === 0) return;
 
       const title = messages[0]?.content.slice(0, 40) || "Untitled";
-      const id = new Date().toISOString().replace(/[:.]/g, "-");
+      // Use stable ID based on session id so we can overwrite on auto-save
+      const fileId = `session-${session.id}`;
       const historyDir = await getHistoryDir();
-      const filePath = PathUtils.join(historyDir, `${id}.json`);
+      const filePath = PathUtils.join(historyDir, `${fileId}.json`);
 
       const data = {
-        id,
+        id: fileId,
         title,
         created: Date.now(),
         messages: messages.map(m => ({
@@ -232,9 +233,81 @@ function doInitChat(
       };
 
       await IOUtils.writeUTF8(filePath, JSON.stringify(data, null, 2));
-      Zotero.log(`[Clautero] Saved chat history: ${filePath}`, "info");
     } catch (e) {
       Zotero.log(`[Clautero] Failed to save history: ${e}`, "warning");
+    }
+  }
+
+  async function saveAllSessions(): Promise<void> {
+    try {
+      for (const s of sessions) {
+        if (s.chatState.messages.length > 0) {
+          await saveSessionToHistory(s);
+        }
+      }
+      // Write _active.json to track last active session
+      const historyDir = await getHistoryDir();
+      const activeSession = getActiveSession();
+      if (activeSession) {
+        const activeData = { sessionId: `session-${activeSession.id}` };
+        await IOUtils.writeUTF8(
+          PathUtils.join(historyDir, "_active.json"),
+          JSON.stringify(activeData)
+        );
+      }
+      Zotero.log("[Clautero] All sessions saved", "info");
+    } catch (e) {
+      Zotero.log(`[Clautero] Failed to save all sessions: ${e}`, "warning");
+    }
+  }
+
+  async function restoreLastSession(): Promise<void> {
+    try {
+      const historyDir = await getHistoryDir();
+
+      // Read _active.json to find last active session
+      const activePath = PathUtils.join(historyDir, "_active.json");
+      const activeExists = await IOUtils.exists(activePath);
+      if (!activeExists) return;
+
+      const activeContent = await IOUtils.readUTF8(activePath);
+      const activeData = JSON.parse(activeContent);
+      const sessionId = activeData.sessionId as string;
+      if (!sessionId) return;
+
+      // Load the session file
+      const sessionPath = PathUtils.join(historyDir, `${sessionId}.json`);
+      const sessionExists = await IOUtils.exists(sessionPath);
+      if (!sessionExists) return;
+
+      const sessionContent = await IOUtils.readUTF8(sessionPath);
+      const data = JSON.parse(sessionContent);
+      if (!data.messages || !Array.isArray(data.messages) || data.messages.length === 0) return;
+
+      // Restore into first session
+      const firstSession = sessions[0];
+      if (!firstSession) return;
+
+      // Remove welcome screen
+      const welcome = firstSession.messageContainer.querySelector(".clautero-welcome");
+      if (welcome) welcome.remove();
+
+      // Render messages
+      for (const msg of data.messages) {
+        firstSession.chatState = addMessage(firstSession.chatState, {
+          role: msg.role, content: msg.content, chunks: [], timestamp: msg.timestamp,
+        });
+        if (msg.role === "user") {
+          firstSession.renderer.renderUserMessage(msg.content);
+        } else {
+          firstSession.renderer.appendTextChunk(msg.content);
+          firstSession.renderer.finishAssistantMessage();
+        }
+      }
+
+      Zotero.log(`[Clautero] Restored last session: ${sessionId} (${data.messages.length} messages)`, "info");
+    } catch (e) {
+      Zotero.log(`[Clautero] Failed to restore session: ${e}`, "warning");
     }
   }
 
@@ -676,6 +749,18 @@ function doInitChat(
   // Hide original messageArea (we use per-session containers)
   messageArea.style.display = "none";
 
+  // Restore last session from disk
+  restoreLastSession().catch(e => {
+    Zotero.log(`[Clautero] Session restore failed: ${e}`, "warning");
+  });
+
+  // Save all sessions on shutdown
+  cleanupList.push(() => {
+    saveAllSessions().catch(e => {
+      Zotero.log(`[Clautero] Shutdown save failed: ${e}`, "warning");
+    });
+  });
+
   // ── Send handler ──
   inputController.setOnSend(async (text: string) => {
     const session = getActiveSession();
@@ -750,6 +835,8 @@ function doInitChat(
           if (chunk.type === "result" || chunk.type === "error") {
             inputController.setDisabled(false);
             inputController.focus();
+            // Auto-save session after each response
+            saveSessionToHistory(session);
           }
         },
         onError: (error: Error) => {
