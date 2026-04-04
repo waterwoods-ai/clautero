@@ -1,34 +1,33 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE window>
+<linkset>
+  <html:link rel="localization" href="addon.ftl" xmlns:html="http://www.w3.org/1999/xhtml"/>
+</linkset>
+
 <vbox xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
       xmlns:html="http://www.w3.org/1999/xhtml">
   <groupbox>
-    <label><html:h2 data-l10n-id="clautero-prefs-title" /></label>
+    <label><html:h2>Clautero</html:h2></label>
 
     <hbox align="center">
-      <label data-l10n-id="clautero-prefs-claude-cli-path" />
+      <label value="Claude CLI Path:" />
       <html:input type="text" id="clautero-prefs-cli-path"
                   preference="extensions.clautero.claudeCliPath"
-                  style="flex: 1;" />
+                  placeholder="/path/to/claude"
+                  style="flex: 1; font-family: monospace;" />
     </hbox>
-    <description data-l10n-id="clautero-prefs-claude-cli-path-desc" />
+    <description style="font-size: 11px; color: #666; margin: 4px 0 12px 0;">
+      Full path to the Claude CLI binary. Run "which claude" in terminal to find it.
+    </description>
 
     <checkbox id="clautero-prefs-auto-attach"
-              data-l10n-id="clautero-prefs-auto-attach"
+              label="Auto-attach selected item/collection as context"
               preference="extensions.clautero.autoAttachContext" />
 
-    <hbox align="center">
-      <label data-l10n-id="clautero-prefs-sidebar-width" />
-      <html:input type="number" id="clautero-prefs-sidebar-width"
-                  preference="extensions.clautero.sidebarWidth"
-                  min="200" max="800" />
-    </hbox>
-
-    <hbox align="center">
-      <label data-l10n-id="clautero-prefs-max-context" />
+    <hbox align="center" style="margin-top: 8px;">
+      <label value="Max context length (chars):" />
       <html:input type="number" id="clautero-prefs-max-context"
                   preference="extensions.clautero.maxContextLength"
-                  min="1000" max="200000" />
+                  min="1000" max="200000"
+                  style="width: 80px;" />
     </hbox>
   </groupbox>
 </vbox>

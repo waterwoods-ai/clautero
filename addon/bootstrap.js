@@ -32,16 +32,15 @@ async function startup({ id, version, resourceURI, rootURI }, _reason) {
       rootURI + "content/clautero.js"
     );
 
-    // Register preference pane
+    // Register preference pane (Zotero 8 guide format)
     try {
       Zotero.PreferencePanes.register({
         pluginID: "clautero@zotero-plugin",
         src: rootURI + "content/preferences.xhtml",
-        label: "Clautero",
-        image: rootURI + "content/icons/chat.svg",
       });
+      Zotero.log("[Clautero] Preference pane registered", "info");
     } catch (e) {
-      // Zotero.PreferencePanes may not exist in older versions
+      Zotero.logError("[Clautero] Failed to register preference pane: " + e);
     }
 
     await Zotero.Clautero.hooks.onStartup();
