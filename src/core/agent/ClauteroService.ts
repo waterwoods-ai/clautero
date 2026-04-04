@@ -9,25 +9,26 @@ import { createSubprocessManager, cleanupOrphanedProcess } from "./SubprocessMan
 import { createMessageChannel } from "./MessageChannel";
 import { resolveCLIPath } from "./CLIPathResolver";
 
-function getPermissionMode(): string {
+function getPref(key: string, fallback: string): string {
   try {
-    const mode = Zotero.Prefs.get(
-      "extensions.clautero.permissionMode", true
-    ) as string;
-    if (mode && ["acceptEdits", "plan", "bypassPermissions", "default", "auto"].includes(mode)) {
-      return mode;
-    }
-  } catch { /* ignore */ }
-  return "acceptEdits";
+    const val = Zotero.Prefs.get(`extensions.clautero.${key}`, true) as string;
+    return (val && val.trim()) ? val.trim() : fallback;
+  } catch { return fallback; }
 }
 
 function buildCliArgs(sessionId?: string): string[] {
+  const permissionMode = getPref("permissionMode", "acceptEdits");
+  const model = getPref("model", "sonnet");
+  const effort = getPref("effort", "low");
+
   const args = [
     "-p",
     "--input-format", "stream-json",
     "--output-format", "stream-json",
     "--verbose",
-    "--permission-mode", getPermissionMode(),
+    "--permission-mode", permissionMode,
+    "--model", model,
+    "--effort", effort,
   ];
   if (sessionId) {
     args.push("--resume", sessionId);

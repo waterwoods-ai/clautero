@@ -15,6 +15,10 @@ export interface SidebarElements {
   readonly sendButton: HTMLElement;
   readonly statusBar: HTMLElement;
   readonly sessionBar: HTMLElement;
+  readonly modelLabel: HTMLElement;
+  readonly effortLabel: HTMLElement;
+  readonly contextPct: HTMLElement;
+  readonly yoloLabel: HTMLElement;
 }
 
 let registeredElements: SidebarElements | null = null;
@@ -139,18 +143,46 @@ export function initSidebarManager(
   inputArea.appendChild(sendButton);
   bottomSection.appendChild(inputArea);
 
-  // Status bar
+  // Status bar — Claudian-style: Model | Thinking: Level | 🌗 N%  ... YOLO
   const statusBar = el(doc, "div", `
     display:flex;align-items:center;justify-content:space-between;
     padding:4px 14px 6px;font-size:11px;color:#888;
   `, "clautero-status-bar");
 
-  const modelLabel = el(doc, "span", "font-weight:500;");
-  modelLabel.textContent = "Opus";
+  const leftGroup = el(doc, "div", "display:flex;align-items:center;gap:6px;");
+
+  const modelLabel = el(doc, "span", "font-weight:500;cursor:pointer;");
+  modelLabel.textContent = "sonnet";
+  modelLabel.setAttribute("title", "Click to change model");
+
+  const sep1 = el(doc, "span", "color:#ccc;");
+  sep1.textContent = "|";
+
+  const effortLabel = el(doc, "span", "cursor:pointer;");
+  effortLabel.textContent = "Thinking: Low";
+  effortLabel.setAttribute("title", "Click to change thinking level");
+
+  const sep2 = el(doc, "span", "color:#ccc;");
+  sep2.textContent = "|";
+
   const contextPct = el(doc, "span", "");
-  contextPct.textContent = "0%";
-  statusBar.appendChild(modelLabel);
-  statusBar.appendChild(contextPct);
+  contextPct.textContent = "\u25D1 0%";
+
+  leftGroup.appendChild(modelLabel);
+  leftGroup.appendChild(sep1);
+  leftGroup.appendChild(effortLabel);
+  leftGroup.appendChild(sep2);
+  leftGroup.appendChild(contextPct);
+
+  const rightGroup = el(doc, "div", "display:flex;align-items:center;gap:4px;");
+  const yoloLabel = el(doc, "span", "cursor:pointer;font-weight:500;user-select:none;");
+  yoloLabel.textContent = "YOLO \u25CB";
+  yoloLabel.setAttribute("title", "Toggle YOLO mode (bypass permissions)");
+
+  rightGroup.appendChild(yoloLabel);
+
+  statusBar.appendChild(leftGroup);
+  statusBar.appendChild(rightGroup);
   bottomSection.appendChild(statusBar);
 
   // Assemble
@@ -161,6 +193,7 @@ export function initSidebarManager(
 
   registeredElements = Object.freeze({
     messageArea, contextBar, textarea, sendButton, statusBar, sessionBar,
+    modelLabel, effortLabel, contextPct, yoloLabel,
   });
 
   // ══════════════════════════════════════════════

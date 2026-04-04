@@ -137,8 +137,244 @@ function doInitChat(
   elements: SidebarElements,
   cleanupList: Array<() => void>
 ): void {
-  const { messageArea, textarea, sendButton, contextBar, statusBar, sessionBar } = elements;
+  const {
+    messageArea, textarea, sendButton, contextBar, statusBar, sessionBar,
+    modelLabel, effortLabel, contextPct, yoloLabel,
+  } = elements;
   const doc = win.document;
+
+  // ── Model cycling ──
+  const MODELS = ["sonnet", "opus", "haiku"] as const;
+  modelLabel.addEventListener("click", () => {
+    const current = Zotero.Prefs.get("extensions.clautero.model", true) as string || "sonnet";
+    const idx = MODELS.indexOf(current as typeof MODELS[number]);
+    const next = MODELS[(idx + 1) % MODELS.length];
+    Zotero.Prefs.set("extensions.clautero.model", next, true);
+    modelLabel.textContent = next;
+    Zotero.log(`[Clautero] Model changed to: ${next}`, "info");
+  });
+  // Init from pref
+  const initModel = Zotero.Prefs.get("extensions.clautero.model", true) as string || "sonnet";
+  modelLabel.textContent = initModel;
+
+  // ── Effort/Thinking cycling ──
+  const EFFORTS: Array<{ value: string; label: string }> = [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "max", label: "Ultra" },
+  ];
+  effortLabel.addEventListener("click", () => {
+    const current = Zotero.Prefs.get("extensions.clautero.effort", true) as string || "low";
+    const idx = EFFORTS.findIndex(e => e.value === current);
+    const next = EFFORTS[(idx + 1) % EFFORTS.length];
+    Zotero.Prefs.set("extensions.clautero.effort", next.value, true);
+    effortLabel.textContent = `Thinking: ${next.label}`;
+    Zotero.log(`[Clautero] Effort changed to: ${next.value}`, "info");
+  });
+  // Init from pref
+  const initEffort = Zotero.Prefs.get("extensions.clautero.effort", true) as string || "low";
+  const initEffortObj = EFFORTS.find(e => e.value === initEffort) || EFFORTS[0];
+  effortLabel.textContent = `Thinking: ${initEffortObj.label}`;
+
+  // ── YOLO toggle ──
+  let yoloOn = (Zotero.Prefs.get("extensions.clautero.permissionMode", true) as string) === "bypassPermissions";
+  function updateYoloDisplay(): void {
+    yoloLabel.textContent = yoloOn ? "YOLO \u25CF" : "YOLO \u25CB";
+    yoloLabel.style.color = yoloOn ? "#e74c3c" : "#888";
+  }
+  updateYoloDisplay();
+  yoloLabel.addEventListener("click", () => {
+    yoloOn = !yoloOn;
+    Zotero.Prefs.set(
+      "extensions.clautero.permissionMode",
+      yoloOn ? "bypassPermissions" : "acceptEdits",
+      true
+    );
+    updateYoloDisplay();
+    Zotero.log(`[Clautero] YOLO mode: ${yoloOn ? "ON" : "OFF"}`, "info");
+  });
+
+  // ── Context usage update ──
+  let totalTokens = 0;
+  const CONTEXT_WINDOW = 200000;
+  function updateContextUsage(inputTokens: number, outputTokens: number): void {
+    totalTokens = inputTokens + outputTokens;
+    const pct = Math.min(100, Math.round((totalTokens / CONTEXT_WINDOW) * 100));
+    contextPct.textContent = `\u25D1 ${pct}%`;
+  }
+
+  // ── Chat history save/load ──
+  async function getHistoryDir(): Promise<string> {
+    const dir = PathUtils.join(addon.workspaceDir, "chat-history");
+    await IOUtils.makeDirectory(dir, { ignoreExisting: true });
+    return dir;
+  }
+
+  async function saveSessionToHistory(session: Session): Promise<void> {
+    try {
+      const messages = session.chatState.messages;
+      if (messages.length === 0) return;
+
+      const title = messages[0]?.content.slice(0, 40) || "Untitled";
+      const id = new Date().toISOString().replace(/[:.]/g, "-");
+      const historyDir = await getHistoryDir();
+      const filePath = PathUtils.join(historyDir, `${id}.json`);
+
+      const data = {
+        id,
+        title,
+        created: Date.now(),
+        messages: messages.map(m => ({
+          role: m.role,
+          content: m.content,
+          timestamp: m.timestamp,
+        })),
+      };
+
+      await IOUtils.writeUTF8(filePath, JSON.stringify(data, null, 2));
+      Zotero.log(`[Clautero] Saved chat history: ${filePath}`, "info");
+    } catch (e) {
+      Zotero.log(`[Clautero] Failed to save history: ${e}`, "warning");
+    }
+  }
+
+  async function loadHistoryList(): Promise<Array<{ id: string; title: string; created: number; path: string }>> {
+    try {
+      const historyDir = await getHistoryDir();
+      const files = await IOUtils.getChildren(historyDir);
+      const items: Array<{ id: string; title: string; created: number; path: string }> = [];
+
+      for (const filePath of files) {
+        if (!filePath.endsWith(".json")) continue;
+        try {
+          const content = await IOUtils.readUTF8(filePath);
+          const data = JSON.parse(content);
+          items.push({
+            id: data.id || "",
+            title: data.title || "Untitled",
+            created: data.created || 0,
+            path: filePath,
+          });
+        } catch { /* skip bad files */ }
+      }
+
+      return items.sort((a, b) => b.created - a.created);
+    } catch { return []; }
+  }
+
+  function showHistoryPanel(): void {
+    const session = getActiveSession();
+    if (!session) return;
+    const container = session.messageContainer;
+
+    // Toggle off if already showing
+    const existing = container.querySelector(".clautero-history-panel");
+    if (existing) { existing.remove(); return; }
+
+    const panel = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+    panel.className = "clautero-history-panel";
+    panel.style.cssText = `
+      position:absolute;top:0;left:0;right:0;bottom:0;background:#fff;
+      z-index:50;overflow-y:auto;padding:16px;
+    `;
+
+    const title = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+    title.style.cssText = "font-weight:600;font-size:14px;margin-bottom:12px;";
+    title.textContent = "Chat History";
+    panel.appendChild(title);
+
+    const loading = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+    loading.style.cssText = "color:#888;font-style:italic;";
+    loading.textContent = "Loading...";
+    panel.appendChild(loading);
+
+    container.style.position = "relative";
+    container.appendChild(panel);
+
+    // Load history async
+    loadHistoryList().then(items => {
+      loading.remove();
+      if (items.length === 0) {
+        const empty = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+        empty.style.cssText = "color:#888;text-align:center;margin:40px 0;";
+        empty.textContent = "No chat history yet";
+        panel.appendChild(empty);
+        return;
+      }
+
+      for (const item of items) {
+        const row = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+        row.style.cssText = `
+          display:flex;justify-content:space-between;align-items:center;
+          padding:8px 10px;margin:2px 0;border-radius:6px;cursor:pointer;
+          border:1px solid #eee;
+        `;
+        row.addEventListener("mouseenter", () => { row.style.background = "#f5f5f5"; });
+        row.addEventListener("mouseleave", () => { row.style.background = ""; });
+
+        const info = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+        const titleSpan = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+        titleSpan.style.cssText = "font-weight:500;font-size:13px;";
+        titleSpan.textContent = item.title;
+        const dateSpan = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
+        dateSpan.style.cssText = "font-size:11px;color:#888;margin-top:2px;";
+        dateSpan.textContent = new Date(item.created).toLocaleString();
+        info.appendChild(titleSpan);
+        info.appendChild(dateSpan);
+
+        row.appendChild(info);
+        row.addEventListener("click", () => {
+          panel.remove();
+          loadHistoryItem(item.path);
+        });
+        panel.appendChild(row);
+      }
+    });
+
+    // Close button
+    const closeBtn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
+    closeBtn.style.cssText = `
+      position:absolute;top:12px;right:12px;background:none;border:none;
+      font-size:18px;cursor:pointer;color:#666;
+    `;
+    closeBtn.textContent = "\u00D7";
+    closeBtn.addEventListener("click", () => panel.remove());
+    panel.appendChild(closeBtn);
+  }
+
+  async function loadHistoryItem(filePath: string): Promise<void> {
+    try {
+      const content = await IOUtils.readUTF8(filePath);
+      const data = JSON.parse(content);
+      if (!data.messages || !Array.isArray(data.messages)) return;
+
+      // Create a new session and render the messages
+      const newSession = createSession();
+      switchSession(newSession.id);
+
+      // Remove welcome
+      const welcome = newSession.messageContainer.querySelector(".clautero-welcome");
+      if (welcome) welcome.remove();
+
+      // Render loaded messages
+      for (const msg of data.messages) {
+        newSession.chatState = addMessage(newSession.chatState, {
+          role: msg.role, content: msg.content, chunks: [], timestamp: msg.timestamp,
+        });
+        if (msg.role === "user") {
+          newSession.renderer.renderUserMessage(msg.content);
+        } else {
+          newSession.renderer.appendTextChunk(msg.content);
+          newSession.renderer.finishAssistantMessage();
+        }
+      }
+
+      Zotero.log(`[Clautero] Loaded history: ${filePath}`, "info");
+    } catch (e) {
+      Zotero.log(`[Clautero] Failed to load history: ${e}`, "warning");
+    }
+  }
 
   const inputController = createInputController(textarea, sendButton);
   cleanupList.push(() => inputController.cleanup());
@@ -359,11 +595,27 @@ function doInitChat(
       `;
       addBtn.textContent = "+";
       addBtn.addEventListener("click", () => {
+        // Save current session to history before creating new
+        const current = getActiveSession();
+        if (current && current.chatState.messages.length > 0) {
+          saveSessionToHistory(current);
+        }
         const newSession = createSession();
         switchSession(newSession.id);
       });
       sessionBar.appendChild(addBtn);
     }
+
+    // [🕐] history button
+    const histBtn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
+    histBtn.style.cssText = `
+      width:24px;height:24px;border-radius:4px;cursor:pointer;
+      font-size:14px;border:1px solid #ddd;background:transparent;color:#888;
+    `;
+    histBtn.textContent = "\uD83D\uDD50";
+    histBtn.setAttribute("title", "Chat history");
+    histBtn.addEventListener("click", () => showHistoryPanel());
+    sessionBar.appendChild(histBtn);
   }
 
   // Create first session and switch to it
@@ -371,16 +623,6 @@ function doInitChat(
   switchSession(firstSession.id);
   // Hide original messageArea (we use per-session containers)
   messageArea.style.display = "none";
-
-  // ── Status bar update ──
-  function updateStatus(model?: string): void {
-    while (statusBar.firstChild) statusBar.removeChild(statusBar.firstChild);
-    const modelEl = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
-    modelEl.style.cssText = "font-weight:500;";
-    modelEl.textContent = model || "Opus";
-    statusBar.appendChild(modelEl);
-  }
-  updateStatus();
 
   // ── Send handler ──
   inputController.setOnSend(async (text: string) => {
@@ -416,11 +658,21 @@ function doInitChat(
         onChunk: (chunk: StreamChunk) => {
           session.streamController.handleChunk(chunk);
 
-          // Update model name from system messages
+          // Update model name and context usage from response metadata
           if (chunk.type === "system" || chunk.type === "result") {
             const meta = chunk.metadata ?? {};
             if (typeof meta.model === "string") {
-              updateStatus(meta.model);
+              modelLabel.textContent = meta.model.replace(/^claude-/, "").split("-")[0] || meta.model;
+            }
+          }
+
+          // Update context usage from result metadata
+          if (chunk.type === "result") {
+            const meta = chunk.metadata ?? {};
+            const inputT = typeof meta.input_tokens === "number" ? meta.input_tokens : 0;
+            const outputT = typeof meta.output_tokens === "number" ? meta.output_tokens : 0;
+            if (inputT > 0 || outputT > 0) {
+              updateContextUsage(inputT, outputT);
             }
           }
 

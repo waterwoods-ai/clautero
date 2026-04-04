@@ -6,3 +6,5 @@ pref("extensions.clautero.maxContextLength", 50000);
 pref("extensions.clautero.commandsDir", "");
 pref("extensions.clautero.workspaceDir", "");
 pref("extensions.clautero.permissionMode", "acceptEdits");
+pref("extensions.clautero.model", "sonnet");
+pref("extensions.clautero.effort", "low");
