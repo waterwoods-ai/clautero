@@ -18,6 +18,17 @@
       Full path to the Claude CLI binary. Run "which claude" in terminal to find it.
     </description>
 
+    <hbox align="center" style="margin-top: 8px;">
+      <label value="Workspace Directory:" />
+      <html:input type="text" id="clautero-prefs-workspace"
+                  preference="extensions.clautero.workspaceDir"
+                  placeholder="(default: Zotero data dir/clautero/workspace)"
+                  style="flex: 1; font-family: monospace;" />
+    </hbox>
+    <description style="font-size: 11px; color: #666; margin: 4px 0 12px 0;">
+      Working directory for Claude. Leave empty to use default. Claude can read/write files here.
+    </description>
+
     <checkbox id="clautero-prefs-auto-attach"
               label="Auto-attach selected item/collection as context"
               preference="extensions.clautero.autoAttachContext" />

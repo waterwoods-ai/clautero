@@ -11,6 +11,14 @@ export class Addon {
   }
 
   get workspaceDir(): string {
+    try {
+      const custom = Zotero.Prefs.get(
+        "extensions.clautero.workspaceDir", true
+      ) as string;
+      if (custom && custom.trim().length > 0) {
+        return custom.trim();
+      }
+    } catch { /* ignore */ }
     return PathUtils.join(this.dataDir, "workspace");
   }
 
