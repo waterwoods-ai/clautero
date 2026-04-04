@@ -6,9 +6,9 @@ export default defineConfig({
   name: "Clautero",
   id: "clautero@zotero-plugin",
   namespace: "clautero",
-  updateURL: "https://raw.githubusercontent.com/tom/clautero/main/update.json",
+  updateURL: "https://raw.githubusercontent.com/waterwoods-ai/clautero/main/update.json",
   xpiDownloadLink:
-    "https://github.com/tom/clautero/releases/download/v{version}/{xpiName}.xpi",
+    "https://github.com/waterwoods-ai/clautero/releases/download/v{version}/{xpiName}.xpi",
   build: {
     esbuildOptions: [
       {

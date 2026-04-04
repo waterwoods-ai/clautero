@@ -1,11 +1,11 @@
 {
   "name": "clautero",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "A Zotero plugin that embeds Claude Code as a sidebar AI research assistant",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tom/clautero.git"
+    "url": "https://github.com/waterwoods-ai/clautero.git"
   },
   "scripts": {
     "start": "zotero-plugin serve",

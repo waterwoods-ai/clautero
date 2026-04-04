@@ -37,7 +37,7 @@ You (Zotero) → Clautero (UI) → Claude Code CLI (Anthropic) → Claude API
 
 ## Installation
 
-1. Download the latest `.xpi` from [Releases](https://github.com/tom/clautero/releases)
+1. Download the latest `.xpi` from [Releases](https://github.com/waterwoods-ai/clautero/releases)
 2. In Zotero: **Tools → Add-ons → gear icon → Install Add-on From File**
 3. Select the `.xpi` file
 4. Open **Zotero → Settings → Clautero** and set your Claude CLI path
@@ -78,11 +78,11 @@ The status bar at the bottom provides quick toggles:
 ## Build from Source
 
 ```bash
-git clone https://github.com/tom/clautero.git
+git clone https://github.com/waterwoods-ai/clautero.git
 cd clautero
 npm install
 npm run build
-# Output: build/clautero-0.2.0.xpi
+# Output: build/clautero-1.0.0.xpi
 ```
 
 ## Usage
