@@ -550,15 +550,15 @@ function doInitChat(
       const tabWrap = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
       const isActive = s.id === activeSessionId;
       tabWrap.style.cssText = `
-        display:inline-flex;align-items:center;gap:2px;
-        border-radius:4px;cursor:pointer;
-        border:1px solid ${isActive ? "#333" : "#ddd"};
+        display:inline-flex;align-items:center;gap:1px;
+        border-radius:3px;cursor:pointer;
+        border:1px solid ${isActive ? "#333" : "#ccc"};
         background:${isActive ? "#fff" : "transparent"};
-        padding:0 2px 0 6px;height:24px;
+        padding:1px 4px;height:22px;min-width:20px;justify-content:center;
       `;
 
       const label = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
-      label.style.cssText = `font-size:12px;font-weight:500;color:${isActive ? "#333" : "#888"};`;
+      label.style.cssText = `font-size:13px;font-weight:${isActive ? "600" : "400"};color:${isActive ? "#333" : "#999"};`;
       label.textContent = String(displayNum);
       label.addEventListener("click", () => switchSession(s.id));
       tabWrap.appendChild(label);
@@ -585,37 +585,23 @@ function doInitChat(
     spacer.style.cssText = "flex:1;";
     sessionBar.appendChild(spacer);
 
-    // Helper: create SVG icon button
-    function iconBtn(title: string, svgPath: string): HTMLElement {
+    // Helper: create icon button with Unicode character (Claudian style)
+    function iconBtn(title: string, icon: string): HTMLElement {
       const btn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
       btn.style.cssText = `
         width:24px;height:24px;border-radius:4px;cursor:pointer;
         border:none;background:transparent;padding:0;
         display:flex;align-items:center;justify-content:center;
+        font-size:16px;color:#888;
       `;
       btn.setAttribute("title", title);
-      const svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("viewBox", "0 0 16 16");
-      svg.setAttribute("width", "14");
-      svg.setAttribute("height", "14");
-      const path = doc.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("fill", "#888");
-      path.setAttribute("d", svgPath);
-      svg.appendChild(path);
-      btn.appendChild(svg);
+      btn.textContent = icon;
       return btn;
     }
 
-    // [+] add tab button
+    // [⊞] add tab button
     if (sessions.length < MAX_SESSIONS) {
-      // Plus icon: horizontal + vertical bars
-      const addBtn = iconBtn("New tab", "M8 2v12M2 8h12");
-      const addSvg = addBtn.querySelector("svg") as SVGElement;
-      const addPath = addSvg.querySelector("path") as SVGPathElement;
-      addPath.removeAttribute("fill");
-      addPath.setAttribute("stroke", "#888");
-      addPath.setAttribute("stroke-width", "2");
-      addPath.setAttribute("stroke-linecap", "round");
+      const addBtn = iconBtn("New tab", "\u229E");
       addBtn.addEventListener("click", () => {
         // Save current session to history before creating new
         const current = getActiveSession();
@@ -628,11 +614,8 @@ function doInitChat(
       sessionBar.appendChild(addBtn);
     }
 
-    // [✎] new conversation button (pencil/edit icon)
-    // Pencil icon path
-    const newConvBtn = iconBtn("New conversation",
-      "M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z"
-    );
+    // [✎] new conversation button
+    const newConvBtn = iconBtn("New conversation", "\u270E");
     newConvBtn.addEventListener("click", () => {
       const current = getActiveSession();
       if (!current) return;
@@ -681,17 +664,8 @@ function doInitChat(
     });
     sessionBar.appendChild(newConvBtn);
 
-    // [🕐] history button (clock icon)
-    const histBtn = iconBtn("Chat history",
-      "M8 1a7 7 0 100 14A7 7 0 008 1zm0 2v5l3 3"
-    );
-    const histSvg = histBtn.querySelector("svg") as SVGElement;
-    const histPath = histSvg.querySelector("path") as SVGPathElement;
-    histPath.removeAttribute("fill");
-    histPath.setAttribute("stroke", "#888");
-    histPath.setAttribute("stroke-width", "1.5");
-    histPath.setAttribute("fill", "none");
-    histPath.setAttribute("stroke-linecap", "round");
+    // [⏱] history button
+    const histBtn = iconBtn("Chat history", "\u29D7");
     histBtn.addEventListener("click", () => showHistoryPanel());
     sessionBar.appendChild(histBtn);
   }
