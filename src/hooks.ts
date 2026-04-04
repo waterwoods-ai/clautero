@@ -585,14 +585,37 @@ function doInitChat(
     spacer.style.cssText = "flex:1;";
     sessionBar.appendChild(spacer);
 
-    // [+] button
-    if (sessions.length < MAX_SESSIONS) {
-      const addBtn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
-      addBtn.style.cssText = `
+    // Helper: create SVG icon button
+    function iconBtn(title: string, svgPath: string): HTMLElement {
+      const btn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
+      btn.style.cssText = `
         width:24px;height:24px;border-radius:4px;cursor:pointer;
-        font-size:14px;border:1px solid #ddd;background:transparent;color:#888;
+        border:none;background:transparent;padding:0;
+        display:flex;align-items:center;justify-content:center;
       `;
-      addBtn.textContent = "+";
+      btn.setAttribute("title", title);
+      const svg = doc.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 16 16");
+      svg.setAttribute("width", "14");
+      svg.setAttribute("height", "14");
+      const path = doc.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("fill", "#888");
+      path.setAttribute("d", svgPath);
+      svg.appendChild(path);
+      btn.appendChild(svg);
+      return btn;
+    }
+
+    // [+] add tab button
+    if (sessions.length < MAX_SESSIONS) {
+      // Plus icon: horizontal + vertical bars
+      const addBtn = iconBtn("New tab", "M8 2v12M2 8h12");
+      const addSvg = addBtn.querySelector("svg") as SVGElement;
+      const addPath = addSvg.querySelector("path") as SVGPathElement;
+      addPath.removeAttribute("fill");
+      addPath.setAttribute("stroke", "#888");
+      addPath.setAttribute("stroke-width", "2");
+      addPath.setAttribute("stroke-linecap", "round");
       addBtn.addEventListener("click", () => {
         // Save current session to history before creating new
         const current = getActiveSession();
@@ -605,14 +628,11 @@ function doInitChat(
       sessionBar.appendChild(addBtn);
     }
 
-    // [✎] new conversation button (clears current tab)
-    const newConvBtn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
-    newConvBtn.style.cssText = `
-      width:24px;height:24px;border-radius:4px;cursor:pointer;
-      font-size:13px;border:1px solid #ddd;background:transparent;color:#888;
-    `;
-    newConvBtn.textContent = "\u270E";
-    newConvBtn.setAttribute("title", "New conversation");
+    // [✎] new conversation button (pencil/edit icon)
+    // Pencil icon path
+    const newConvBtn = iconBtn("New conversation",
+      "M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z"
+    );
     newConvBtn.addEventListener("click", () => {
       const current = getActiveSession();
       if (!current) return;
@@ -661,14 +681,17 @@ function doInitChat(
     });
     sessionBar.appendChild(newConvBtn);
 
-    // [🕐] history button
-    const histBtn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
-    histBtn.style.cssText = `
-      width:24px;height:24px;border-radius:4px;cursor:pointer;
-      font-size:14px;border:1px solid #ddd;background:transparent;color:#888;
-    `;
-    histBtn.textContent = "\uD83D\uDD50";
-    histBtn.setAttribute("title", "Chat history");
+    // [🕐] history button (clock icon)
+    const histBtn = iconBtn("Chat history",
+      "M8 1a7 7 0 100 14A7 7 0 008 1zm0 2v5l3 3"
+    );
+    const histSvg = histBtn.querySelector("svg") as SVGElement;
+    const histPath = histSvg.querySelector("path") as SVGPathElement;
+    histPath.removeAttribute("fill");
+    histPath.setAttribute("stroke", "#888");
+    histPath.setAttribute("stroke-width", "1.5");
+    histPath.setAttribute("fill", "none");
+    histPath.setAttribute("stroke-linecap", "round");
     histBtn.addEventListener("click", () => showHistoryPanel());
     sessionBar.appendChild(histBtn);
   }
