@@ -206,9 +206,17 @@ function doInitChat(
 
   // ── Chat history save/load ──
   async function getHistoryDir(): Promise<string> {
-    const dir = PathUtils.join(addon.workspaceDir, "chat-history");
-    await IOUtils.makeDirectory(dir, { ignoreExisting: true });
-    return dir;
+    try {
+      const dir = PathUtils.join(addon.workspaceDir, "chat-history");
+      await IOUtils.makeDirectory(dir, { ignoreExisting: true });
+      return dir;
+    } catch (e) {
+      // Fallback for paths with special characters (e.g., OneDrive on Windows)
+      Zotero.log(`[Clautero] History dir error: ${e}`, "warning");
+      const fallback = PathUtils.join(PathUtils.tempDir, "clautero-history");
+      await IOUtils.makeDirectory(fallback, { ignoreExisting: true });
+      return fallback;
+    }
   }
 
   async function saveSessionToHistory(session: Session): Promise<void> {
@@ -787,7 +795,12 @@ function doInitChat(
       }
       if (!home) return skills;
 
-      const skillsDir = PathUtils.join(home, ".claude", "skills");
+      let skillsDir: string;
+      try {
+        skillsDir = PathUtils.join(home, ".claude", "skills");
+      } catch {
+        return skills; // PathUtils.join failed (special chars in path)
+      }
       const exists = await IOUtils.exists(skillsDir);
       if (!exists) return skills;
 
