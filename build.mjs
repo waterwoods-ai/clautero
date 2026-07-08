@@ -1,6 +1,6 @@
 import * as esbuild from "esbuild";
 import { execFileSync } from "child_process";
-import { mkdirSync, cpSync, existsSync, rmSync } from "fs";
+import { mkdirSync, cpSync, existsSync, rmSync, readFileSync } from "fs";
 import { join } from "path";
 
 const outDir = "build";
@@ -25,7 +25,8 @@ await esbuild.build({
 cpSync("addon", addonDir, { recursive: true });
 
 // Build .xpi (just a zip)
-const xpiName = "clautero-1.0.0.xpi";
+const { version } = JSON.parse(readFileSync("package.json", "utf8"));
+const xpiName = `clautero-${version}.xpi`;
 const xpiPath = join(outDir, xpiName);
 if (existsSync(xpiPath)) {
   rmSync(xpiPath);
