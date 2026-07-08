@@ -96,7 +96,7 @@ git clone https://github.com/waterwoods-ai/clautero.git
 cd clautero
 npm install
 npm run build
-# Output: build/clautero-1.0.1.xpi
+# Output: build/clautero-1.1.0.xpi
 ```
 
 ## Usage

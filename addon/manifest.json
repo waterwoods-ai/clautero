@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Clautero",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Embed Claude Code as a sidebar AI research assistant in Zotero",
   "author": "tom",
   "homepage_url": "https://github.com/waterwoods-ai/clautero",
