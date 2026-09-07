@@ -46,7 +46,7 @@ You (Zotero) → Clautero (UI) → Claude Code CLI (Anthropic) → Claude API
 
 ## Installation
 
-1. Download the latest `.xpi` from [Releases](https://github.com/waterwoods-ai/clautero/releases)
+1. Download the latest `.xpi`: [clautero-2.0.0.xpi](https://github.com/waterwoods-ai/clautero/releases/download/v2.0.0/clautero-2.0.0.xpi) (all versions on the [Releases](https://github.com/waterwoods-ai/clautero/releases) page)
 2. In Zotero: **Tools → Add-ons → gear icon → Install Add-on From File**
 3. Select the `.xpi` file
 4. Click the chat bubble icon in the right sidebar — the Claude CLI is auto-detected (Settings → Clautero only if detection fails)
