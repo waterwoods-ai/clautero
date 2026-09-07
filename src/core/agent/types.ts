@@ -38,9 +38,21 @@ export interface ToolRequest {
 
 export type ToolApprovalResult = "approve" | "deny";
 
+/** Per-session CLI settings; anything omitted falls back to global prefs. */
+export interface SessionSettings {
+  readonly model?: string;
+  readonly effort?: string;
+  readonly permissionMode?: string;
+}
+
 export interface ClauteroServiceOptions {
   readonly cwd: string;
+  /** Pre-resolved CLI path; empty string → resolve per provider at spawn. */
   readonly cliPath: string;
+  /** Agent CLI backing this session (default: Claude). */
+  readonly provider?: import("../providers/types").ProviderModule;
+  /** Called at spawn time so each session can bind its own model. */
+  readonly getSettings?: () => SessionSettings;
   readonly onChunk: (chunk: StreamChunk) => void;
   readonly onError: (error: Error) => void;
   readonly onToolRequest?: (

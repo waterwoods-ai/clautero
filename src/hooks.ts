@@ -6,10 +6,37 @@ import { createChatState, addMessage, type ChatStateData } from "./modules/chat/
 import { createMessageRenderer } from "./modules/chat/MessageRenderer";
 import { createStreamController } from "./modules/chat/StreamController";
 import { createClauteroService } from "./core/agent/ClauteroService";
-import { resolveCLIPath, clearCLIPathCache } from "./core/agent/CLIPathResolver";
+import {
+  resolveProviderCLIPath,
+  isProviderAvailable,
+  clearCLIPathCache,
+} from "./core/agent/CLIPathResolver";
+import {
+  PROVIDERS,
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+} from "./core/providers/registry";
+import type { ProviderModule } from "./core/providers/types";
 import type { StreamChunk } from "./core/agent/types";
 import { createContextChipsView } from "./modules/context/ContextChipsView";
+import { getActiveReaderItem } from "./modules/context/ReaderItem";
 import { BUILT_IN_COMMANDS, type SlashCommand } from "./modules/commands/builtInCommands";
+import {
+  resolveNewSessionModel,
+  createModelSelectionCoordinator,
+} from "./modules/chat/ModelSelection";
+import { showPopupMenu, closeActivePopup } from "./modules/sidebar/PopupMenu";
+import { createWarmPool, WarmCapacityError } from "./modules/sessions/WarmPool";
+import { resolveIndicator, type SessionStatusKind } from "./modules/sessions/SessionStatus";
+import {
+  createLayoutPersistence,
+  decodeLayout,
+  encodeLayout,
+  resolveRestorePlan,
+  type SessionLayoutState,
+} from "./modules/sessions/SessionLayout";
+import { showHistoryPanel } from "./modules/history/HistoryPanel";
+import type { HistoryEntry } from "./modules/history/HistoryQuery";
 
 export interface Hooks {
   onStartup(): Promise<void>;
@@ -19,13 +46,11 @@ export interface Hooks {
 }
 
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
-const MAX_SESSIONS = 5;
 
-async function resolveCliPath(): Promise<string> {
-  return resolveCLIPath();
-}
-
-function showSetupPrompt(session: Session, doc: Document): void {
+function showSetupPrompt(session: Session, doc: Document, provider: ProviderModule): void {
+  const prefKey = provider.id === "claude"
+    ? "extensions.clautero.claudeCliPath"
+    : `extensions.clautero.cliPath.${provider.id}`;
   const container = session.messageContainer;
 
   // Don't show duplicate setup prompts
@@ -40,11 +65,14 @@ function showSetupPrompt(session: Session, doc: Document): void {
 
   const title = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
   title.style.cssText = "font-weight:600;font-size:14px;margin-bottom:8px;";
-  title.textContent = "Configure Claude CLI Path";
+  title.textContent = `Configure ${provider.label} CLI Path`;
 
   const desc = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
   desc.style.cssText = "font-size:12px;color:#666;margin-bottom:12px;line-height:1.4;";
-  desc.textContent = 'Enter the full path to your Claude CLI executable. Mac/Linux: run "which claude". Windows: run "where claude". Must include filename (e.g., /usr/local/bin/claude or C:\\Users\\You\\.local\\bin\\claude.exe).';
+  const bin = provider.binaryName.unix;
+  desc.textContent = `Enter the full path to your ${provider.label} CLI executable. ` +
+    `Mac/Linux: run "which ${bin}". Windows: run "where ${bin}". ` +
+    `Must include the filename (e.g., /usr/local/bin/${bin}).`;
 
   const inputRow = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
   inputRow.style.cssText = "display:flex;gap:6px;";
@@ -68,15 +96,15 @@ function showSetupPrompt(session: Session, doc: Document): void {
     if (!path) return;
 
     try {
-      Zotero.Prefs.set("extensions.clautero.claudeCliPath", path, true);
+      Zotero.Prefs.set(prefKey, path, true);
       // Clear cached path so it picks up the new one
       clearCLIPathCache();
       // Remove setup prompt
       setup.remove();
       // Show confirmation
-      session.renderer.appendTextChunk("Claude CLI path saved. Send a message to start chatting!");
+      session.renderer.appendTextChunk(`${provider.label} CLI path saved. Send a message to start chatting!`);
       session.renderer.finishAssistantMessage();
-      Zotero.log(`[Clautero] CLI path configured: ${path}`, "info");
+      Zotero.log(`[Clautero] ${provider.label} CLI path configured: ${path}`, "info");
     } catch (e) {
       Zotero.log(`[Clautero] Failed to save CLI path: ${e}`, "error");
     }
@@ -100,7 +128,11 @@ function isAutoAttachEnabled(): boolean {
   catch { return true; }
 }
 
-function getSelectedItem(): Zotero.Item | null {
+function getSelectedItem(win: Window): Zotero.Item | null {
+  // In a PDF reader tab, the open paper wins over the library selection
+  const readerItem = getActiveReaderItem(win);
+  if (readerItem) return readerItem;
+
   try {
     const pane = Zotero.getActiveZoteroPane();
     if (!pane) return null;
@@ -125,6 +157,17 @@ function getSelectedCollection(): Zotero.Collection | null {
 // ── Session type ──
 interface Session {
   id: number;
+  /** Stable id naming this session's history file; survives restarts. */
+  historyId: string;
+  /** Provider conversation id (--resume / -s / --session-id target). */
+  claudeSessionId: string | null;
+  /** Agent CLI backing this session ("claude", "codex", "opencode", "pi"). */
+  providerId: string;
+  model: string;
+  status: SessionStatusKind;
+  /** Model changed while a turn was streaming; cool the process at turn end. */
+  pendingModelChange: boolean;
+  pinned: boolean;
   chatState: ChatStateData;
   service: ReturnType<typeof createClauteroService> | null;
   renderer: ReturnType<typeof createMessageRenderer>;
@@ -140,23 +183,133 @@ function doInitChat(
 ): void {
   const {
     messageArea, textarea, sendButton, contextBar, statusBar, sessionBar,
-    modelLabel, effortLabel, contextPct, yoloLabel,
+    providerLabel, modelLabel, effortLabel, contextPct, yoloLabel,
   } = elements;
   const doc = win.document;
 
-  // ── Model cycling ──
-  const MODELS = ["sonnet", "opus", "haiku"] as const;
-  modelLabel.addEventListener("click", () => {
-    const current = Zotero.Prefs.get("extensions.clautero.model", true) as string || "sonnet";
-    const idx = MODELS.indexOf(current as typeof MODELS[number]);
-    const next = MODELS[(idx + 1) % MODELS.length];
-    Zotero.Prefs.set("extensions.clautero.model", next, true);
-    modelLabel.textContent = next;
-    Zotero.log(`[Clautero] Model changed to: ${next}`, "info");
+  // ── Provider roster (availability probed at startup, re-probed on demand) ──
+  let availableProviderIds: string[] = [DEFAULT_PROVIDER_ID];
+  let providerProbeRunning = false;
+
+  function probeProviders(): void {
+    if (providerProbeRunning) return;
+    providerProbeRunning = true;
+    void (async () => {
+      try {
+        const ids: string[] = [];
+        for (const candidate of PROVIDERS) {
+          if (await isProviderAvailable(candidate)) ids.push(candidate.id);
+        }
+        if (ids.length > 0) availableProviderIds = ids;
+        Zotero.log(`[Clautero] Available providers: ${availableProviderIds.join(", ")}`, "info");
+      } finally {
+        providerProbeRunning = false;
+      }
+    })();
+  }
+  probeProviders();
+
+  function getProviderSeed(): string {
+    try {
+      const seed = Zotero.Prefs.get("extensions.clautero.lastSelectedProvider", true) as string;
+      if (seed && seed.trim()) return seed.trim();
+    } catch { /* ignore */ }
+    return DEFAULT_PROVIDER_ID;
+  }
+
+  function applyProviderChange(session: Session, providerId: string): void {
+    if (providerId === session.providerId) return;
+    const next = getProvider(providerId);
+    Zotero.Prefs.set("extensions.clautero.lastSelectedProvider", next.id, true);
+
+    const isFresh = session.chatState.messages.length === 0 && !session.claudeSessionId;
+    if (isFresh) {
+      session.providerId = next.id;
+      session.model = resolveNewSessionModel(getModelSeed(), next.models);
+      refreshStatusLabels();
+      scheduleLayoutSave();
+      Zotero.log(`[Clautero] Session ${session.id} provider → ${next.label}`, "info");
+    } else {
+      // A bound conversation keeps its provider — open a fresh tab instead.
+      const newSession = createSession(undefined, undefined, undefined, next.id);
+      switchSession(newSession.id);
+      Zotero.log(`[Clautero] Opened new ${next.label} tab (bound sessions keep their provider)`, "info");
+    }
+  }
+
+  providerLabel.addEventListener("click", () => {
+    const session = getActiveSession();
+    if (!session) return;
+    // A CLI installed after startup (or a probe that raced this click)
+    // shows up the next time the menu opens.
+    if (availableProviderIds.length < PROVIDERS.length) probeProviders();
+    showPopupMenu(doc, providerLabel, PROVIDERS.map((p) => {
+      const available = availableProviderIds.includes(p.id);
+      return {
+        value: p.id,
+        label: p.label,
+        selected: p.id === session.providerId,
+        disabled: !available,
+        description: available ? undefined : "Not installed",
+      };
+    }), (value) => applyProviderChange(session, value));
   });
-  // Init from pref
-  const initModel = Zotero.Prefs.get("extensions.clautero.model", true) as string || "sonnet";
-  modelLabel.textContent = initModel;
+
+  // ── Model selection (per-session, seeded from the last explicit pick) ──
+  const modelCoordinator = createModelSelectionCoordinator();
+
+  function getModelSeed(): string | null {
+    try {
+      const seed = Zotero.Prefs.get("extensions.clautero.lastSelectedModel", true) as string;
+      if (seed && seed.trim()) return seed.trim();
+    } catch { /* ignore */ }
+    try {
+      // Legacy global pref, used as seed once
+      return (Zotero.Prefs.get("extensions.clautero.model", true) as string) || null;
+    } catch { return null; }
+  }
+
+  function applyModelChange(session: Session, next: string): void {
+    if (next === session.model) return;
+    const intent = modelCoordinator.beginIntent();
+    session.model = next;
+    refreshStatusLabels();
+    scheduleLayoutSave();
+    void modelCoordinator.commitIntent(intent, async () => {
+      Zotero.Prefs.set("extensions.clautero.lastSelectedModel", next, true);
+      // A live process is bound to the old model; cool it so the next
+      // message respawns (and resumes) with the new one. Mid-turn, defer
+      // the cool to turn completion instead of dropping it.
+      if (session.service && session.service.getState() === "active") {
+        if (session.status !== "streaming") {
+          await session.service.interrupt();
+        } else {
+          session.pendingModelChange = true;
+        }
+      }
+    }, () => session.model === next);
+    Zotero.log(`[Clautero] Model for session ${session.id}: ${next}`, "info");
+  }
+
+  modelLabel.addEventListener("click", () => {
+    const session = getActiveSession();
+    if (!session) return;
+    const provider = getProvider(session.providerId);
+    if (provider.models.length === 0) {
+      showPopupMenu(doc, modelLabel, [{
+        value: "",
+        label: "Auto",
+        description: `${provider.label} uses its own configured default model`,
+        selected: true,
+      }], () => {});
+      return;
+    }
+    showPopupMenu(doc, modelLabel, provider.models.map((m) => ({
+      value: m,
+      label: m,
+      selected: m === session.model,
+    })), (value) => applyModelChange(session, value));
+  });
 
   // ── Effort/Thinking cycling ──
   const EFFORTS: Array<{ value: string; label: string }> = [
@@ -167,11 +320,16 @@ function doInitChat(
   ];
   effortLabel.addEventListener("click", () => {
     const current = Zotero.Prefs.get("extensions.clautero.effort", true) as string || "low";
-    const idx = EFFORTS.findIndex(e => e.value === current);
-    const next = EFFORTS[(idx + 1) % EFFORTS.length];
-    Zotero.Prefs.set("extensions.clautero.effort", next.value, true);
-    effortLabel.textContent = `Thinking: ${next.label}`;
-    Zotero.log(`[Clautero] Effort changed to: ${next.value}`, "info");
+    showPopupMenu(doc, effortLabel, EFFORTS.map((e) => ({
+      value: e.value,
+      label: e.label,
+      selected: e.value === current,
+    })), (value) => {
+      const chosen = EFFORTS.find(e => e.value === value) ?? EFFORTS[0];
+      Zotero.Prefs.set("extensions.clautero.effort", chosen.value, true);
+      effortLabel.textContent = `Thinking: ${chosen.label}`;
+      Zotero.log(`[Clautero] Effort changed to: ${chosen.value}`, "info");
+    });
   });
   // Init from pref
   const initEffort = Zotero.Prefs.get("extensions.clautero.effort", true) as string || "low";
@@ -229,16 +387,35 @@ function doInitChat(
       const messages = session.chatState.messages;
       if (messages.length === 0) return;
 
-      const title = messages[0]?.content.slice(0, 40) || "Untitled";
-      // Use stable ID based on session id so we can overwrite on auto-save
-      const fileId = `session-${session.id}`;
+      const fileId = session.historyId;
       const historyDir = await getHistoryDir();
       const filePath = PathUtils.join(historyDir, `${fileId}.json`);
+
+      // Preserve fields the user controls (rename, pin) and the original
+      // creation time across auto-saves.
+      let title = messages[0]?.content.slice(0, 40) || "Untitled";
+      let titleEdited = false;
+      let created = Date.now();
+      let pinned = session.pinned;
+      try {
+        const existing = JSON.parse(await IOUtils.readUTF8(filePath));
+        if (existing.titleEdited === true && typeof existing.title === "string") {
+          title = existing.title;
+          titleEdited = true;
+        }
+        if (typeof existing.created === "number") created = existing.created;
+        if (typeof existing.pinned === "boolean") pinned = existing.pinned;
+      } catch { /* first save of this session */ }
 
       const data = {
         id: fileId,
         title,
-        created: Date.now(),
+        titleEdited,
+        created,
+        pinned,
+        provider: session.providerId,
+        model: session.model,
+        ...(session.claudeSessionId ? { claudeSessionId: session.claudeSessionId } : {}),
         messages: messages.map(m => ({
           role: m.role,
           content: m.content,
@@ -259,80 +436,71 @@ function doInitChat(
           await saveSessionToHistory(s);
         }
       }
-      // Write _active.json to track last active session
-      const historyDir = await getHistoryDir();
-      const activeSession = getActiveSession();
-      if (activeSession) {
-        const activeData = { sessionId: `session-${activeSession.id}` };
-        await IOUtils.writeUTF8(
-          PathUtils.join(historyDir, "_active.json"),
-          JSON.stringify(activeData)
-        );
-      }
+      await layoutPersistence.flush();
       Zotero.log("[Clautero] All sessions saved", "info");
     } catch (e) {
       Zotero.log(`[Clautero] Failed to save all sessions: ${e}`, "warning");
     }
   }
 
-  async function restoreLastSession(): Promise<void> {
+  function isRestoreEnabled(): boolean {
+    try {
+      return Zotero.Prefs.get("extensions.clautero.restoreTabs", true) !== false;
+    } catch { return true; }
+  }
+
+  async function loadLayoutState(): Promise<SessionLayoutState | null> {
     try {
       const historyDir = await getHistoryDir();
-
-      // Read _active.json to find last active session
-      const activePath = PathUtils.join(historyDir, "_active.json");
-      const activeExists = await IOUtils.exists(activePath);
-      if (!activeExists) return;
-
-      const activeContent = await IOUtils.readUTF8(activePath);
-      const activeData = JSON.parse(activeContent);
-      const sessionId = activeData.sessionId as string;
-      if (!sessionId) return;
-
-      // Load the session file
-      const sessionPath = PathUtils.join(historyDir, `${sessionId}.json`);
-      const sessionExists = await IOUtils.exists(sessionPath);
-      if (!sessionExists) return;
-
-      const sessionContent = await IOUtils.readUTF8(sessionPath);
-      const data = JSON.parse(sessionContent);
-      if (!data.messages || !Array.isArray(data.messages) || data.messages.length === 0) return;
-
-      // Restore into first session
-      const firstSession = sessions[0];
-      if (!firstSession) return;
-
-      // Remove welcome screen
-      const welcome = firstSession.messageContainer.querySelector(".clautero-welcome");
-      if (welcome) welcome.remove();
-
-      // Render messages
-      for (const msg of data.messages) {
-        firstSession.chatState = addMessage(firstSession.chatState, {
-          role: msg.role, content: msg.content, chunks: [], timestamp: msg.timestamp,
-        });
-        if (msg.role === "user") {
-          firstSession.renderer.renderUserMessage(msg.content);
-        } else {
-          firstSession.renderer.appendTextChunk(msg.content);
-          firstSession.renderer.finishAssistantMessage();
-        }
-      }
-
-      Zotero.log(`[Clautero] Restored last session: ${sessionId} (${data.messages.length} messages)`, "info");
+      const layoutPath = PathUtils.join(historyDir, "_layout.json");
+      if (!(await IOUtils.exists(layoutPath))) return null;
+      return decodeLayout(JSON.parse(await IOUtils.readUTF8(layoutPath)));
     } catch (e) {
-      Zotero.log(`[Clautero] Failed to restore session: ${e}`, "warning");
+      Zotero.log(`[Clautero] Could not read session layout: ${e}`, "warning");
+      return null;
     }
   }
 
-  async function loadHistoryList(): Promise<Array<{ id: string; title: string; created: number; path: string }>> {
+  /** Restore the persisted tab workspace. Returns false when starting fresh. */
+  async function restoreLayout(): Promise<boolean> {
+    const plan = resolveRestorePlan(await loadLayoutState(), {
+      restoreOnStartup: isRestoreEnabled(),
+    });
+    if (plan.shells.length === 0) return false;
+
+    const historyDir = await getHistoryDir();
+    for (const shell of plan.shells) {
+      // Legacy shells (pre-provider) are Claude conversations by definition.
+      const session = createSession(
+        shell.historyId, shell.model, shell.claudeSessionId,
+        shell.provider ?? DEFAULT_PROVIDER_ID
+      );
+      const filePath = PathUtils.join(historyDir, `${shell.historyId}.json`);
+      try {
+        if (await IOUtils.exists(filePath)) {
+          await renderSessionFromFile(session, filePath);
+        }
+      } catch (e) {
+        Zotero.log(`[Clautero] Could not restore ${shell.historyId}: ${e}`, "warning");
+      }
+    }
+
+    const active = sessions.find((s) => s.historyId === plan.activeHistoryId) ?? sessions[0];
+    if (active) switchSession(active.id);
+    Zotero.log(`[Clautero] Restored ${plan.shells.length} session tab(s)`, "info");
+    return sessions.length > 0;
+  }
+
+  async function loadHistoryList(): Promise<HistoryEntry[]> {
     try {
       const historyDir = await getHistoryDir();
       const files = await IOUtils.getChildren(historyDir);
-      const items: Array<{ id: string; title: string; created: number; path: string }> = [];
+      const items: HistoryEntry[] = [];
 
       for (const filePath of files) {
         if (!filePath.endsWith(".json")) continue;
+        const base = filePath.split(/[\\/]/).pop() ?? "";
+        if (base.startsWith("_")) continue; // _layout.json and other metadata
         try {
           const content = await IOUtils.readUTF8(filePath);
           const data = JSON.parse(content);
@@ -340,130 +508,139 @@ function doInitChat(
             id: data.id || "",
             title: data.title || "Untitled",
             created: data.created || 0,
+            pinned: data.pinned === true,
             path: filePath,
           });
         } catch { /* skip bad files */ }
       }
 
-      return items.sort((a, b) => b.created - a.created);
+      return items;
     } catch { return []; }
   }
 
-  function showHistoryPanel(): void {
-    const session = getActiveSession();
-    if (!session) return;
-    const container = session.messageContainer;
+  async function renderSessionFromFile(session: Session, filePath: string): Promise<void> {
+    const content = await IOUtils.readUTF8(filePath);
+    const data = JSON.parse(content);
+    if (!data.messages || !Array.isArray(data.messages)) return;
 
-    // Toggle off if already showing
-    const existing = container.querySelector(".clautero-history-panel");
-    if (existing) { existing.remove(); return; }
+    session.pinned = data.pinned === true;
+    if (!session.claudeSessionId && typeof data.claudeSessionId === "string") {
+      session.claudeSessionId = data.claudeSessionId;
+    }
+    if (typeof data.provider === "string" && data.provider) {
+      session.providerId = data.provider;
+    }
+    if (typeof data.model === "string") {
+      session.model = data.model;
+    }
 
-    const panel = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-    panel.className = "clautero-history-panel";
-    panel.style.cssText = `
-      position:absolute;top:0;left:0;right:0;bottom:0;background:#fff;
-      z-index:50;overflow-y:auto;padding:16px;
-    `;
+    const welcome = session.messageContainer.querySelector(".clautero-welcome");
+    if (welcome) welcome.remove();
 
-    const title = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-    title.style.cssText = "font-weight:600;font-size:14px;margin-bottom:12px;";
-    title.textContent = "Chat History";
-    panel.appendChild(title);
+    for (const msg of data.messages) {
+      session.chatState = addMessage(session.chatState, {
+        role: msg.role, content: msg.content, chunks: [], timestamp: msg.timestamp,
+      });
+      if (msg.role === "user") {
+        session.renderer.renderUserMessage(msg.content);
+      } else {
+        session.renderer.appendTextChunk(msg.content);
+        session.renderer.finishAssistantMessage();
+      }
+    }
+  }
 
-    const loading = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-    loading.style.cssText = "color:#888;font-style:italic;";
-    loading.textContent = "Loading...";
-    panel.appendChild(loading);
-
-    container.style.position = "relative";
-    container.appendChild(panel);
-
-    // Load history async
-    loadHistoryList().then(items => {
-      loading.remove();
-      if (items.length === 0) {
-        const empty = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-        empty.style.cssText = "color:#888;text-align:center;margin:40px 0;";
-        empty.textContent = "No chat history yet";
-        panel.appendChild(empty);
+  async function loadHistoryItem(entry: HistoryEntry): Promise<void> {
+    try {
+      // Already open in a tab → just focus it
+      const existing = sessions.find((s) => s.historyId === entry.id);
+      if (existing) {
+        switchSession(existing.id);
         return;
       }
 
-      for (const item of items) {
-        const row = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-        row.style.cssText = `
-          display:flex;justify-content:space-between;align-items:center;
-          padding:8px 10px;margin:2px 0;border-radius:6px;cursor:pointer;
-          border:1px solid #eee;
-        `;
-        row.addEventListener("mouseenter", () => { row.style.background = "#f5f5f5"; });
-        row.addEventListener("mouseleave", () => { row.style.background = ""; });
-
-        const info = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-        const titleSpan = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-        titleSpan.style.cssText = "font-weight:500;font-size:13px;";
-        titleSpan.textContent = item.title;
-        const dateSpan = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-        dateSpan.style.cssText = "font-size:11px;color:#888;margin-top:2px;";
-        dateSpan.textContent = new Date(item.created).toLocaleString();
-        info.appendChild(titleSpan);
-        info.appendChild(dateSpan);
-
-        row.appendChild(info);
-        row.addEventListener("click", () => {
-          panel.remove();
-          loadHistoryItem(item.path);
-        });
-        panel.appendChild(row);
-      }
-    });
-
-    // Close button
-    const closeBtn = doc.createElementNS(XHTML_NS, "button") as HTMLElement;
-    closeBtn.style.cssText = `
-      position:absolute;top:12px;right:12px;background:none;border:none;
-      font-size:18px;cursor:pointer;color:#666;
-    `;
-    closeBtn.textContent = "\u00D7";
-    closeBtn.addEventListener("click", () => panel.remove());
-    panel.appendChild(closeBtn);
-  }
-
-  async function loadHistoryItem(filePath: string): Promise<void> {
-    try {
-      const content = await IOUtils.readUTF8(filePath);
-      const data = JSON.parse(content);
-      if (!data.messages || !Array.isArray(data.messages)) return;
-
-      // Create a new session and render the messages
-      const newSession = createSession();
+      // Legacy files can carry a blank id — never let it become a historyId.
+      // Default to Claude: pre-provider history files are Claude conversations;
+      // newer files override this from their own "provider" field on render.
+      const newSession = createSession(entry.id || undefined, undefined, undefined, DEFAULT_PROVIDER_ID);
       switchSession(newSession.id);
-
-      // Remove welcome
-      const welcome = newSession.messageContainer.querySelector(".clautero-welcome");
-      if (welcome) welcome.remove();
-
-      // Render loaded messages
-      for (const msg of data.messages) {
-        newSession.chatState = addMessage(newSession.chatState, {
-          role: msg.role, content: msg.content, chunks: [], timestamp: msg.timestamp,
-        });
-        if (msg.role === "user") {
-          newSession.renderer.renderUserMessage(msg.content);
-        } else {
-          newSession.renderer.appendTextChunk(msg.content);
-          newSession.renderer.finishAssistantMessage();
-        }
-      }
-
-      Zotero.log(`[Clautero] Loaded history: ${filePath}`, "info");
+      await renderSessionFromFile(newSession, entry.path);
+      refreshStatusLabels();
+      scheduleLayoutSave();
+      Zotero.log(`[Clautero] Loaded history: ${entry.path}`, "info");
     } catch (e) {
       Zotero.log(`[Clautero] Failed to load history: ${e}`, "warning");
     }
   }
 
+  async function updateHistoryFile(
+    entry: HistoryEntry,
+    transform: (data: Record<string, unknown>) => Record<string, unknown>
+  ): Promise<void> {
+    try {
+      const data = JSON.parse(await IOUtils.readUTF8(entry.path)) as Record<string, unknown>;
+      const next = transform(data);
+      await IOUtils.writeUTF8(entry.path, JSON.stringify(next, null, 2));
+      const open = sessions.find((s) => s.historyId === entry.id);
+      if (open) open.pinned = next.pinned === true;
+    } catch (e) {
+      Zotero.log(`[Clautero] Failed to update history file: ${e}`, "warning");
+    }
+  }
+
+  function openHistoryPanel(): void {
+    const session = getActiveSession();
+    if (!session) return;
+    showHistoryPanel(doc, session.messageContainer, {
+      loadEntries: loadHistoryList,
+      onOpen: (entry) => { void loadHistoryItem(entry); },
+      onTogglePin: (entry) =>
+        updateHistoryFile(entry, (d) => ({ ...d, pinned: !(d.pinned === true) })),
+      onRename: (entry, title) =>
+        updateHistoryFile(entry, (d) => ({ ...d, title, titleEdited: true })),
+    });
+  }
+
   const inputController = createInputController(textarea, sendButton);
   cleanupList.push(() => inputController.cleanup());
+  cleanupList.push(closeActivePopup);
+
+  // The composer is shared by all tabs: its disabled state must always
+  // reflect the ACTIVE session, not whichever session finished last.
+  function syncInputToActiveSession(): void {
+    inputController.setDisabled(getActiveSession()?.status === "streaming");
+  }
+
+  // ── Esc interrupts the running turn (message restored semantics: the
+  //    turn is stopped; the session resumes with --resume on next send) ──
+  async function interruptActiveSession(): Promise<void> {
+    const session = getActiveSession();
+    if (!session || session.status !== "streaming") return;
+    session.status = "idle";
+    updateSessionBar();
+    try {
+      await session.service?.interrupt();
+    } catch (e) {
+      Zotero.log(`[Clautero] Interrupt failed: ${e}`, "warning");
+    }
+    session.streamController.markInterrupted();
+    inputController.setDisabled(false);
+    inputController.focus();
+    Zotero.log("[Clautero] Turn interrupted by user", "info");
+  }
+
+  const escHandler = (e: Event) => {
+    const ke = e as KeyboardEvent;
+    if (ke.key !== "Escape") return;
+    const session = getActiveSession();
+    if (session && session.status === "streaming") {
+      ke.preventDefault();
+      ke.stopPropagation();
+      void interruptActiveSession();
+    }
+  };
+  doc.addEventListener("keydown", escHandler, true);
+  cleanupList.push(() => doc.removeEventListener("keydown", escHandler, true));
 
   // ── Context ──
   let currentContext = "";
@@ -473,7 +650,7 @@ function doInitChat(
 
   if (isAutoAttachEnabled()) {
     // Initial context: check if item or collection is selected
-    const initialItem = getSelectedItem();
+    const initialItem = getSelectedItem(win);
     if (initialItem) {
       chipsView.update(initialItem);
     } else {
@@ -486,7 +663,7 @@ function doInitChat(
       notify: (event: string, type: string) => {
         if (type === "item" && (event === "select" || event === "modify")) {
           if (!isAutoAttachEnabled()) return;
-          const item = getSelectedItem();
+          const item = getSelectedItem(win);
           if (item) {
             chipsView.update(item);
           }
@@ -510,7 +687,7 @@ function doInitChat(
       if (!isAutoAttachEnabled()) return;
 
       // Check if selected item changed
-      const item = getSelectedItem();
+      const item = getSelectedItem(win);
       const itemId = item?.id ?? null;
       if (itemId !== lastItemId) {
         lastItemId = itemId;
@@ -535,12 +712,74 @@ function doInitChat(
     cleanupList.push(() => (win as any).clearInterval(contextPoll));
   }
 
-  // ── Sessions (max 5) ──
+  // ── Sessions (tabs unlimited; warm subprocesses capped by the pool) ──
   const sessions: Session[] = [];
   let activeSessionId = 0;
+  let nextSessionNumber = 0;
 
-  function createSession(): Session {
-    const id = sessions.length + 1;
+  const warmPool = createWarmPool(() => {
+    try {
+      return Zotero.Prefs.get("extensions.clautero.maxWarmProcesses", true) as number;
+    } catch { return NaN; }
+  });
+
+  function warmOwnerFor(session: Session) {
+    return {
+      id: session.historyId,
+      canCool: () => session.status !== "streaming",
+      cool: async () => {
+        await session.service?.interrupt();
+        Zotero.log(
+          `[Clautero] Cooled session ${session.id} (resumes on next message)`,
+          "info"
+        );
+      },
+    };
+  }
+
+  const layoutPersistence = createLayoutPersistence(
+    async (state) => {
+      const historyDir = await getHistoryDir();
+      await IOUtils.writeUTF8(
+        PathUtils.join(historyDir, "_layout.json"),
+        JSON.stringify(encodeLayout(state), null, 2)
+      );
+    },
+    {
+      setTimeout: (fn, ms) => (win as any).setTimeout(fn, ms) as number,
+      clearTimeout: (id) => (win as any).clearTimeout(id),
+    }
+  );
+  cleanupList.push(() => {
+    layoutPersistence.flush().catch(() => { /* best effort on shutdown */ });
+    layoutPersistence.dispose();
+  });
+
+  function currentLayout(): SessionLayoutState {
+    const active = getActiveSession();
+    return {
+      shells: sessions.map((s) => ({
+        historyId: s.historyId,
+        ...(s.claudeSessionId ? { claudeSessionId: s.claudeSessionId } : {}),
+        ...(s.model ? { model: s.model } : {}),
+        provider: s.providerId,
+      })),
+      activeHistoryId: active?.historyId ?? sessions[0]?.historyId ?? null,
+    };
+  }
+
+  function scheduleLayoutSave(): void {
+    layoutPersistence.update(currentLayout());
+  }
+
+  function createSession(
+    historyId?: string,
+    model?: string,
+    claudeSessionId?: string,
+    provider?: string
+  ): Session {
+    const providerId = provider ?? getProviderSeed();
+    const id = ++nextSessionNumber;
     const msgContainer = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
     msgContainer.style.cssText = "display:none;flex:1;overflow-y:auto;padding:16px;";
 
@@ -566,6 +805,13 @@ function doInitChat(
 
     const session: Session = {
       id,
+      historyId: historyId ?? `session-${Date.now()}-${id}`,
+      claudeSessionId: claudeSessionId ?? null,
+      providerId,
+      model: model ?? resolveNewSessionModel(getModelSeed(), getProvider(providerId).models),
+      status: "idle",
+      pendingModelChange: false,
+      pinned: false,
       chatState,
       service: null,
       renderer,
@@ -579,6 +825,7 @@ function doInitChat(
     });
 
     sessions.push(session);
+    scheduleLayoutSave();
     return session;
   }
 
@@ -596,12 +843,22 @@ function doInitChat(
       session.messageContainer.style.cssText = "flex:1;overflow-y:auto;padding:16px;";
       activeSessionId = id;
     }
+    refreshStatusLabels();
 
+    syncInputToActiveSession();
     updateSessionBar();
+    scheduleLayoutSave();
   }
 
   function getActiveSession(): Session | undefined {
     return sessions.find(s => s.id === activeSessionId);
+  }
+
+  function refreshStatusLabels(): void {
+    const session = getActiveSession();
+    if (!session) return;
+    providerLabel.textContent = getProvider(session.providerId).label;
+    modelLabel.textContent = session.model || "auto";
   }
 
   function closeSession(id: number): void {
@@ -617,6 +874,7 @@ function doInitChat(
     session.streamController.cleanup();
     session.messageContainer.remove();
 
+    warmPool.release(session.historyId);
     sessions.splice(idx, 1);
 
     // If closing active, switch to first remaining
@@ -624,6 +882,7 @@ function doInitChat(
       switchSession(sessions[0].id);
     } else {
       updateSessionBar();
+      scheduleLayoutSave();
     }
   }
 
@@ -649,6 +908,16 @@ function doInitChat(
       label.textContent = String(displayNum);
       label.addEventListener("click", () => switchSession(s.id));
       tabWrap.appendChild(label);
+
+      const indicator = resolveIndicator(s.status);
+      if (indicator.color) {
+        const dot = doc.createElementNS(XHTML_NS, "span") as HTMLElement;
+        dot.style.cssText =
+          `width:6px;height:6px;border-radius:50%;background:${indicator.color};` +
+          "display:inline-block;flex-shrink:0;";
+        tabWrap.appendChild(dot);
+        tabWrap.setAttribute("title", indicator.label);
+      }
 
       // Close button (only if more than 1 session)
       if (sessions.length > 1) {
@@ -686,26 +955,30 @@ function doInitChat(
       return btn;
     }
 
-    // [⊞] add tab button
-    if (sessions.length < MAX_SESSIONS) {
-      const addBtn = iconBtn("New tab", "\u229E");
-      addBtn.addEventListener("click", () => {
-        // Save current session to history before creating new
-        const current = getActiveSession();
-        if (current && current.chatState.messages.length > 0) {
-          saveSessionToHistory(current);
-        }
-        const newSession = createSession();
-        switchSession(newSession.id);
-      });
-      sessionBar.appendChild(addBtn);
-    }
+    // [⊞] add tab button — tabs are unlimited; the warm pool caps processes
+    const addBtn = iconBtn("New tab", "\u229E");
+    addBtn.addEventListener("click", () => {
+      // Save current session to history before creating new
+      const current = getActiveSession();
+      if (current && current.chatState.messages.length > 0) {
+        saveSessionToHistory(current);
+      }
+      const newSession = createSession();
+      switchSession(newSession.id);
+    });
+    sessionBar.appendChild(addBtn);
 
     // [✎] new conversation button
     const newConvBtn = iconBtn("New conversation", "\u270E");
     newConvBtn.addEventListener("click", () => {
       const current = getActiveSession();
       if (!current) return;
+      if (current.status === "streaming") {
+        // Resetting mid-turn would let late chunks from the dying process
+        // land in (and re-bind the session id of) the fresh conversation.
+        Zotero.log("[Clautero] Interrupt (Esc) before starting a new conversation", "warning");
+        return;
+      }
 
       // Save current to history if it has messages
       if (current.chatState.messages.length > 0) {
@@ -715,6 +988,15 @@ function doInitChat(
       // Stop current service
       current.service?.cleanup();
       current.service = null;
+      warmPool.release(current.historyId);
+
+      // The old conversation stays in history under its old id;
+      // this tab becomes a brand-new conversation with the same model.
+      current.historyId = `session-${Date.now()}-${current.id}`;
+      current.claudeSessionId = null;
+      current.status = "idle";
+      current.pinned = false;
+      scheduleLayoutSave();
 
       // Reset chat state
       current.chatState = createChatState();
@@ -753,20 +1035,26 @@ function doInitChat(
 
     // [⏱] history button
     const histBtn = iconBtn("Chat history", "\u29D7");
-    histBtn.addEventListener("click", () => showHistoryPanel());
+    histBtn.addEventListener("click", () => openHistoryPanel());
     sessionBar.appendChild(histBtn);
   }
 
-  // Create first session and switch to it
-  const firstSession = createSession();
-  switchSession(firstSession.id);
   // Hide original messageArea (we use per-session containers)
   messageArea.style.display = "none";
 
-  // Restore last session from disk
-  restoreLastSession().catch(e => {
-    Zotero.log(`[Clautero] Session restore failed: ${e}`, "warning");
-  });
+  // Restore the persisted tab workspace; fall back to one fresh tab
+  restoreLayout()
+    .then((restored) => {
+      if (!restored && sessions.length === 0) {
+        switchSession(createSession().id);
+      }
+    })
+    .catch((e) => {
+      Zotero.log(`[Clautero] Session restore failed: ${e}`, "warning");
+      if (sessions.length === 0) {
+        switchSession(createSession().id);
+      }
+    });
 
   // Save all sessions on shutdown
   cleanupList.push(() => {
@@ -1019,13 +1307,14 @@ function doInitChat(
 
     // Create service if needed
     if (!session.service) {
-      // Resolve CLI path (may throw if not configured)
+      const provider = getProvider(session.providerId);
+      // Resolve CLI path (may throw if not installed/configured)
       let cliPath: string;
       try {
-        cliPath = await resolveCliPath();
+        cliPath = await resolveProviderCLIPath(provider);
       } catch (pathError) {
         // Show inline setup prompt
-        showSetupPrompt(session, doc);
+        showSetupPrompt(session, doc, provider);
         inputController.setDisabled(false);
         return;
       }
@@ -1033,13 +1322,20 @@ function doInitChat(
       session.service = createClauteroService({
         cwd: addon.workspaceDir,
         cliPath,
+        provider,
+        getSettings: () => ({ model: session.model || undefined }),
         onChunk: (chunk: StreamChunk) => {
           session.streamController.handleChunk(chunk);
 
-          // Update model name and context usage from response metadata
+          // Track the Claude session id for --resume and layout persistence
           if (chunk.type === "system" || chunk.type === "result") {
             const meta = chunk.metadata ?? {};
-            if (typeof meta.model === "string") {
+            const sid = typeof meta.session_id === "string" ? meta.session_id : null;
+            if (sid && sid !== session.claudeSessionId) {
+              session.claudeSessionId = sid;
+              scheduleLayoutSave();
+            }
+            if (typeof meta.model === "string" && session.id === activeSessionId) {
               modelLabel.textContent = meta.model.replace(/^claude-/, "").split("-")[0] || meta.model;
             }
           }
@@ -1074,16 +1370,28 @@ function doInitChat(
           }
 
           if (chunk.type === "result" || chunk.type === "error") {
-            inputController.setDisabled(false);
-            inputController.focus();
+            session.status = chunk.type === "error" ? "error" : "idle";
+            if (session.pendingModelChange) {
+              // A model change arrived mid-turn: cool now so the next
+              // message respawns with the new model.
+              session.pendingModelChange = false;
+              void session.service?.interrupt();
+            }
+            updateSessionBar();
+            syncInputToActiveSession();
+            if (session.id === activeSessionId) {
+              inputController.focus();
+            }
             // Auto-save session after each response
             saveSessionToHistory(session);
           }
         },
         onError: (error: Error) => {
+          session.status = "error";
+          updateSessionBar();
           session.renderer.appendTextChunk(`\nError: ${error.message}`);
           session.renderer.finishAssistantMessage();
-          inputController.setDisabled(false);
+          syncInputToActiveSession();
         },
       });
       cleanupList.push(() => session.service?.cleanup());
@@ -1091,18 +1399,26 @@ function doInitChat(
 
     // Start session if needed
     try {
+      await warmPool.acquire(warmOwnerFor(session));
       if (session.service.getState() !== "active") {
-        await session.service.startSession();
+        if (session.claudeSessionId) {
+          await session.service.resumeSession(session.claudeSessionId);
+        } else {
+          await session.service.startSession();
+        }
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      session.renderer.appendTextChunk(`Error: Could not start Claude. ${msg}`);
+      const prefix = e instanceof WarmCapacityError ? "" : "Could not start Claude. ";
+      session.renderer.appendTextChunk(`Error: ${prefix}${msg}`);
       session.renderer.finishAssistantMessage();
-      inputController.setDisabled(false);
+      syncInputToActiveSession();
       return;
     }
 
     // Send
+    session.status = "streaming";
+    updateSessionBar();
     inputController.setDisabled(true);
     session.streamController.startStream();
     try {
@@ -1110,13 +1426,15 @@ function doInitChat(
       session.service.sendMessage(full);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      session.status = "error";
+      updateSessionBar();
       session.renderer.appendTextChunk(`Error: ${msg}`);
       session.renderer.finishAssistantMessage();
-      inputController.setDisabled(false);
+      syncInputToActiveSession();
     }
   });
 
-  Zotero.log("[Clautero] Chat system initialized (Claudian-style, max 5 sessions)", "info");
+  Zotero.log("[Clautero] Chat system initialized (unlimited tabs, warm-pool subprocesses)", "info");
 }
 
 export function createHooks(addon: Addon): Hooks {

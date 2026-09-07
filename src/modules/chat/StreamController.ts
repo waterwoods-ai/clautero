@@ -31,12 +31,22 @@ function createControllerState(): ControllerState {
   });
 }
 
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 export function createStreamController(
   renderer: Renderer,
   getState: () => ChatStateData,
   setState: (next: ChatStateData) => void
 ) {
   let controllerState = createControllerState();
+  let turnStartMs = 0;
+  let hadError = false;
+  let wasInterrupted = false;
 
   function transitionPhase(next: StreamPhase): void {
     controllerState = Object.freeze({
@@ -103,6 +113,13 @@ export function createStreamController(
     }
 
     const metadata = chunk.metadata ?? {};
+
+    // Per-turn duration footer — suppressed on errored or interrupted turns,
+    // so a failed turn is never labeled as if it completed (#1189-style).
+    const succeeded = metadata.subtype === undefined || metadata.subtype === "success";
+    if (succeeded && !hadError && !wasInterrupted && turnStartMs > 0) {
+      renderer.renderTurnFooter(`Replied in ${formatDuration(Date.now() - turnStartMs)}`);
+    }
     const inputTokens = typeof metadata.input_tokens === "number"
       ? metadata.input_tokens
       : 0;
@@ -118,6 +135,7 @@ export function createStreamController(
   }
 
   function handleErrorChunk(chunk: StreamChunk): void {
+    hadError = true;
     renderer.appendTextChunk(`Error: ${chunk.content}`);
     setState(updateLastMessage(getState(), chunk));
     finishStream();
@@ -130,6 +148,9 @@ export function createStreamController(
   }
 
   function startStream(): void {
+    turnStartMs = Date.now();
+    hadError = false;
+    wasInterrupted = false;
     setState(setStreaming(getState(), true));
     setState(
       addMessage(getState(), {
@@ -175,6 +196,19 @@ export function createStreamController(
     }
   }
 
+  /** The user stopped the turn: mark it in the transcript, no footer. */
+  function markInterrupted(): void {
+    // The turn may have completed in the instant before the interrupt
+    // landed — never double-finish or stamp a completed reply as interrupted.
+    if (!getState().isStreaming) return;
+    wasInterrupted = true;
+    if (controllerState.phase === "thinking") {
+      renderer.renderThinkingEnd();
+    }
+    renderer.renderInterruptedMarker();
+    finishStream();
+  }
+
   function cleanup(): void {
     controllerState = createControllerState();
   }
@@ -183,6 +217,7 @@ export function createStreamController(
     handleChunk,
     startStream,
     finishStream,
+    markInterrupted,
     cleanup,
   };
 }

@@ -8,6 +8,8 @@ interface QueuedMessage {
 export interface MessageChannelOptions {
   readonly onSend: (ndjson: string) => Promise<void>;
   readonly onDrained?: () => void;
+  /** Frame a user message for the process stdin (default: Claude stream-json). */
+  readonly formatMessage?: (text: string) => string;
 }
 
 function formatStreamMessage(text: string): string {
@@ -49,7 +51,7 @@ export function createMessageChannel(options: MessageChannelOptions) {
     queue = [];
 
     const merged = mergeMessages(toSend);
-    const ndjson = formatStreamMessage(merged);
+    const ndjson = (options.formatMessage ?? formatStreamMessage)(merged);
 
     try {
       await options.onSend(ndjson);

@@ -1,186 +1,15 @@
 /**
- * NDJSONParser — Parses newline-delimited JSON from Claude CLI stdout.
- *
- * Actual Claude CLI stream-json message format:
- *   {"type":"system","subtype":"...","session_id":"..."}
- *   {"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}
- *   {"type":"result","subtype":"success","result":"full text","session_id":"..."}
- *   {"type":"rate_limit_event","rate_limit_info":{...}}
+ * NDJSONParser — splits a JSONL stdout stream into JSON events and delegates
+ * event→chunk mapping to the active provider's parser (see core/providers).
  */
 
 import type { StreamChunk } from "./types";
 
 export interface NDJSONParserOptions {
+  /** Provider-specific event mapper (ProviderEventParser.parse). */
+  readonly parseEvent: (raw: Record<string, unknown>) => StreamChunk[];
   readonly onMessage: (chunk: StreamChunk) => void;
   readonly onParseError?: (line: string, error: Error) => void;
-}
-
-interface ContentBlock {
-  type: string;
-  text?: string;
-  name?: string;
-  input?: Record<string, unknown>;
-  id?: string;
-}
-
-function extractTextFromAssistant(raw: Record<string, unknown>): StreamChunk[] {
-  const message = raw.message as Record<string, unknown> | undefined;
-  if (!message) {
-    return [];
-  }
-
-  const content = message.content as ContentBlock[] | undefined;
-  if (!Array.isArray(content)) {
-    return [];
-  }
-
-  const chunks: StreamChunk[] = [];
-  for (const block of content) {
-    if (block.type === "text" && typeof block.text === "string") {
-      chunks.push({
-        type: "text",
-        content: block.text,
-        metadata: raw as Readonly<Record<string, unknown>>,
-      });
-    } else if (block.type === "thinking" && typeof block.text === "string") {
-      chunks.push({
-        type: "thinking",
-        content: block.text,
-        metadata: raw as Readonly<Record<string, unknown>>,
-      });
-    } else if (block.type === "tool_use") {
-      chunks.push({
-        type: "tool_use",
-        content: JSON.stringify({ name: block.name, input: block.input }),
-        metadata: {
-          ...raw,
-          tool_name: block.name,
-          tool_id: block.id,
-          args: block.input,
-        } as Readonly<Record<string, unknown>>,
-      });
-    } else if (block.type === "tool_result") {
-      chunks.push({
-        type: "tool_result",
-        content: typeof block.text === "string" ? block.text : JSON.stringify(block),
-        metadata: raw as Readonly<Record<string, unknown>>,
-      });
-    }
-  }
-
-  return chunks;
-}
-
-function parseRawMessage(raw: Record<string, unknown>): StreamChunk[] {
-  const type = raw.type as string;
-
-  if (type === "assistant") {
-    // When --include-partial-messages is enabled, "assistant" messages are
-    // intermediate snapshots. We get real-time content from stream_event
-    // deltas instead, so skip "assistant" to avoid duplication.
-    // The final complete text comes in the "result" message.
-    return [];
-  }
-
-  // Handle stream_event (from --include-partial-messages)
-  // These give real-time thinking/text/tool_use deltas
-  if (type === "stream_event") {
-    const event = raw.event as Record<string, unknown> | undefined;
-    if (!event) return [];
-
-    const eventType = event.type as string;
-
-    // Thinking block start
-    if (eventType === "content_block_start") {
-      const block = event.content_block as Record<string, unknown> | undefined;
-      if (block?.type === "thinking") {
-        return [{ type: "thinking", content: "", metadata: raw as Readonly<Record<string, unknown>> }];
-      }
-      if (block?.type === "tool_use") {
-        const name = block.name as string || "unknown";
-        return [{
-          type: "tool_use",
-          content: JSON.stringify({ name, input: {} }),
-          metadata: { ...raw, tool_name: name } as Readonly<Record<string, unknown>>,
-        }];
-      }
-      return [];
-    }
-
-    // Thinking delta — streaming thinking text
-    if (eventType === "content_block_delta") {
-      const delta = event.delta as Record<string, unknown> | undefined;
-      if (!delta) return [];
-
-      if (delta.type === "thinking_delta") {
-        const text = typeof delta.thinking === "string" ? delta.thinking : "";
-        if (text) {
-          return [{ type: "thinking", content: text, metadata: raw as Readonly<Record<string, unknown>> }];
-        }
-      }
-
-      if (delta.type === "text_delta") {
-        const text = typeof delta.text === "string" ? delta.text : "";
-        if (text) {
-          return [{ type: "text", content: text, metadata: raw as Readonly<Record<string, unknown>> }];
-        }
-      }
-
-      if (delta.type === "input_json_delta") {
-        // Tool input streaming — skip for now
-        return [];
-      }
-
-      return [];
-    }
-
-    // content_block_stop, message_delta, message_stop — skip
-    // (final data comes in the "assistant" and "result" messages)
-    return [];
-  }
-
-  if (type === "result") {
-    const result = typeof raw.result === "string" ? raw.result : "";
-    // Pass full raw metadata — includes usage, modelUsage, session_id, cost, etc.
-    return [
-      {
-        type: "result",
-        content: result,
-        metadata: raw as Readonly<Record<string, unknown>>,
-      },
-    ];
-  }
-
-  if (type === "system") {
-    const subtype = raw.subtype as string | undefined;
-    // Emit system_init-like chunk for session tracking
-    if (raw.session_id) {
-      return [
-        {
-          type: "system",
-          content: subtype ?? "",
-          metadata: raw as Readonly<Record<string, unknown>>,
-        },
-      ];
-    }
-    // Skip noisy hook messages unless they carry a session_id
-    return [];
-  }
-
-  if (type === "error") {
-    return [
-      {
-        type: "error",
-        content: typeof raw.error === "string"
-          ? raw.error
-          : JSON.stringify(raw),
-        metadata: raw as Readonly<Record<string, unknown>>,
-      },
-    ];
-  }
-
-  // rate_limit_event, other types — skip silently
-  return [];
 }
 
 export function createNDJSONParser(options: NDJSONParserOptions) {
@@ -194,7 +23,7 @@ export function createNDJSONParser(options: NDJSONParserOptions) {
 
     try {
       const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-      const chunks = parseRawMessage(parsed);
+      const chunks = options.parseEvent(parsed);
 
       for (const chunk of chunks) {
         options.onMessage(chunk);

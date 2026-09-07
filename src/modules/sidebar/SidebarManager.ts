@@ -2,8 +2,18 @@
  * SidebarManager — Claudian-style chat panel in Zotero's item pane.
  *
  * Layout: header → messages → session tabs → context chips → pill input → status bar
- * Sidenav icon injection + overlay toggle (unchanged from working version).
+ * The panel is a single DOM node that follows the active Zotero tab:
+ * library tab → item pane; PDF reader / note tabs → context pane.
+ * A sidenav icon is injected into every sidenav strip to toggle it.
  */
+
+import { installTextareaAutosize } from "./TextareaSizing";
+import {
+  findAllSidenavs,
+  findActivePaneTarget,
+  ensureContextPaneOpen,
+  type PaneTarget,
+} from "./PaneLocator";
 
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
@@ -15,6 +25,7 @@ export interface SidebarElements {
   readonly sendButton: HTMLElement;
   readonly statusBar: HTMLElement;
   readonly sessionBar: HTMLElement;
+  readonly providerLabel: HTMLElement;
   readonly modelLabel: HTMLElement;
   readonly effortLabel: HTMLElement;
   readonly contextPct: HTMLElement;
@@ -55,8 +66,6 @@ export function initSidebarManager(
 ): () => void {
   const doc = win.document;
   let panelVisible = false;
-  let sidenavBtn: HTMLElement | null = null;
-  let itemPaneContent: HTMLElement | null = null;
   const cleanups: Array<() => void> = [];
 
   // ══════════════════════════════════════════════
@@ -105,7 +114,7 @@ export function initSidebarManager(
 
   // Session tab bar: [1] [2] ... [5]  [+]
   const sessionBar = el(doc, "div", `
-    display:flex;align-items:center;padding:4px 14px;gap:4px;
+    display:flex;align-items:center;flex-wrap:wrap;padding:4px 14px;gap:4px;
     border-top:1px solid #f0f0f0;
   `, "clautero-session-bar");
 
@@ -130,11 +139,8 @@ export function initSidebarManager(
     background:#f8f8f8;color:#333;overflow:hidden;max-height:120px;
     box-sizing:border-box;
   `;
-  // Auto-expand on input
-  textarea.addEventListener("input", () => {
-    textarea.style.height = "auto";
-    textarea.style.height = Math.min(textarea.scrollHeight, 120) + "px";
-  });
+  // Auto-grow is installed below via installTextareaAutosize (rAF-coalesced,
+  // max height tracks panel size instead of being remeasured per keystroke).
 
   const sendButton = el(doc, "button", "display:none;");
   sendButton.textContent = "Send";
@@ -150,6 +156,13 @@ export function initSidebarManager(
   `, "clautero-status-bar");
 
   const leftGroup = el(doc, "div", "display:flex;align-items:center;gap:6px;");
+
+  const providerLabel = el(doc, "span", "font-weight:600;cursor:pointer;color:#c47a4a;");
+  providerLabel.textContent = "Claude";
+  providerLabel.setAttribute("title", "Click to switch provider");
+
+  const sep0 = el(doc, "span", "color:#ccc;");
+  sep0.textContent = "|";
 
   const modelLabel = el(doc, "span", "font-weight:500;cursor:pointer;");
   modelLabel.textContent = "sonnet";
@@ -168,6 +181,8 @@ export function initSidebarManager(
   const contextPct = el(doc, "span", "");
   contextPct.textContent = "\u25D1 0%";
 
+  leftGroup.appendChild(providerLabel);
+  leftGroup.appendChild(sep0);
   leftGroup.appendChild(modelLabel);
   leftGroup.appendChild(sep1);
   leftGroup.appendChild(effortLabel);
@@ -191,60 +206,67 @@ export function initSidebarManager(
   wrapper.appendChild(bottomSection);
   container.appendChild(wrapper);
 
+  cleanups.push(installTextareaAutosize(textarea, wrapper, win));
+
   registeredElements = Object.freeze({
     messageArea, contextBar, textarea, sendButton, statusBar, sessionBar,
-    modelLabel, effortLabel, contextPct, yoloLabel,
+    providerLabel, modelLabel, effortLabel, contextPct, yoloLabel,
   });
 
   // ══════════════════════════════════════════════
-  // INJECT PANEL INTO ITEM PANE (unchanged logic)
+  // PLACE PANEL IN THE ACTIVE PANE
+  // Library tab → item pane; PDF/note tabs → reader context pane.
+  // One DOM node is re-parented, so sessions survive tab switches.
   // ══════════════════════════════════════════════
 
-  let injected = false;
+  let currentTarget: PaneTarget | null = null;
 
-  function injectPanel(): boolean {
-    const sidenav = doc.querySelector("item-pane-sidenav") as HTMLElement;
-    if (!sidenav || !sidenav.parentElement) return false;
+  /** Re-parent the panel next to the active tab's sidenav. Idempotent. */
+  function placePanel(): boolean {
+    const target = findActivePaneTarget(win);
+    if (!target) return false;
 
-    const paneParent = sidenav.parentElement;
-    (paneParent as HTMLElement).style.position = "relative";
+    const alreadyPlaced = container.parentElement === target.host
+      && currentTarget?.sidenav === target.sidenav;
+    if (alreadyPlaced) return true;
 
-    for (const child of Array.from(paneParent.children)) {
-      if (child !== sidenav && child.tagName.toLowerCase() !== "splitter" && child !== container) {
-        itemPaneContent = child as HTMLElement;
-        break;
-      }
-    }
-
-    paneParent.insertBefore(container, sidenav);
-    Zotero.log("[Clautero] Panel injected", "info");
+    target.host.style.position = "relative";
+    target.host.insertBefore(container, target.sidenav);
+    currentTarget = target;
+    Zotero.log(`[Clautero] Panel placed in ${target.kind} pane`, "info");
     return true;
   }
 
-  // Keep trying to inject panel — Zotero may rebuild the pane
-  const injectTimer = (win as any).setInterval(() => {
-    if (!injected) {
-      injected = injectPanel();
-    } else if (!container.parentElement) {
-      // Panel was removed (Zotero rebuilt pane) — re-inject
-      injected = false;
-    }
-  }, 2000);
-  cleanups.push(() => (win as any).clearInterval(injectTimer));
+  // Zotero may rebuild either pane at any time — keep the panel attached.
+  const placeTimer = (win as any).setInterval(() => placePanel(), 2000);
+  cleanups.push(() => (win as any).clearInterval(placeTimer));
+
+  // Follow tab switches (library ↔ reader) as soon as Zotero announces them.
+  const tabObserverID = Zotero.Notifier.registerObserver({
+    notify: (event: string, type: string) => {
+      if (type !== "tab" || (event !== "select" && event !== "load")) return;
+      if (placePanel() && panelVisible) applyVisibleStyle();
+    },
+  }, ["tab"], "clautero-sidebar");
+  cleanups.push(() => {
+    try { Zotero.Notifier.unregisterObserver(tabObserverID); } catch { /* ignore */ }
+  });
 
   // ══════════════════════════════════════════════
-  // INJECT SIDENAV BUTTON (unchanged logic)
+  // SIDENAV BUTTONS — one per sidenav strip
+  // (library item pane + reader context pane)
   // ══════════════════════════════════════════════
 
-  function injectSidenavButton(): void {
-    const sidenav = doc.querySelector("item-pane-sidenav") as HTMLElement
-      ?? doc.querySelector("[class*='sidenav']") as HTMLElement;
-    if (!sidenav) return;
-    if (doc.getElementById("clautero-sidenav-btn")) return;
+  const BTN_CLASS = "clautero-sidenav-btn";
+  const WATCHED_ATTR = "data-clautero-watched";
 
+  function allSidenavButtons(): HTMLElement[] {
+    return Array.from(doc.querySelectorAll(`.${BTN_CLASS}`)) as HTMLElement[];
+  }
+
+  function buildSidenavButton(): HTMLElement {
     const btn = doc.createElementNS(XHTML_NS, "div") as HTMLElement;
-    btn.id = "clautero-sidenav-btn";
-    btn.className = "btn";
+    btn.className = `btn ${BTN_CLASS}`;
     btn.setAttribute("title", "Clautero Chat");
     btn.style.cssText = `
       width:28px;height:28px;display:flex;align-items:center;justify-content:center;
@@ -252,60 +274,82 @@ export function initSidebarManager(
     `;
     btn.appendChild(svgIcon(doc, CHAT_ICON_D, 16, "#666"));
     btn.addEventListener("click", () => togglePanel());
+    return btn;
+  }
+
+  function hasSidenavButton(sidenav: HTMLElement): boolean {
+    return Boolean(
+      sidenav.querySelector(`.${BTN_CLASS}`)
+      ?? sidenav.shadowRoot?.querySelector(`.${BTN_CLASS}`)
+    );
+  }
+
+  function injectSidenavButton(sidenav: HTMLElement): void {
+    if (hasSidenavButton(sidenav)) return;
 
     const btnContainer = sidenav.querySelector(".inherit-flex")
       ?? sidenav.shadowRoot?.querySelector(".inherit-flex")
       ?? sidenav;
-    btnContainer.appendChild(btn);
-    sidenavBtn = btn;
+    btnContainer.appendChild(buildSidenavButton());
 
-    watchOtherButtons();
-    Zotero.log("[Clautero] Sidenav button injected", "info");
+    watchOtherButtons(sidenav);
+    Zotero.log(`[Clautero] Sidenav button injected (${sidenav.id || "sidenav"})`, "info");
   }
 
-  // Keep polling forever — Zotero may rebuild the sidenav at any time
-  // (e.g., on tab switch, window resize, item pane refresh) which
-  // destroys our injected button. Re-inject when it disappears.
-  const pollTimer = (win as any).setInterval(() => {
-    if (!doc.getElementById("clautero-sidenav-btn")) {
-      injectSidenavButton();
-    }
+  // Keep polling forever — Zotero may rebuild a sidenav at any time
+  // (tab switch, window resize, pane refresh), destroying our button.
+  const buttonTimer = (win as any).setInterval(() => {
+    for (const sidenav of findAllSidenavs(doc)) injectSidenavButton(sidenav);
   }, 2000);
-  cleanups.push(() => (win as any).clearInterval(pollTimer));
+  cleanups.push(() => (win as any).clearInterval(buttonTimer));
 
   // ══════════════════════════════════════════════
-  // TOGGLE LOGIC (overlay approach, unchanged)
+  // TOGGLE LOGIC (overlay approach)
   // ══════════════════════════════════════════════
+
+  // Leave right space for the sidenav icon strip (~40px)
+  const VISIBLE_STYLE =
+    "position:absolute;top:0;left:0;right:40px;bottom:0;display:flex;z-index:100;background:#fff;";
+
+  function applyVisibleStyle(): void {
+    (container as HTMLElement).style.cssText = VISIBLE_STYLE;
+  }
+
+  function setButtonsActive(active: boolean): void {
+    for (const btn of allSidenavButtons()) {
+      btn.style.background = active ? "rgba(0,0,0,0.08)" : "";
+    }
+  }
 
   function showChat(): void {
     panelVisible = true;
-    // Leave right space for sidenav icon bar (~40px)
-    (container as HTMLElement).style.cssText =
-      "position:absolute;top:0;left:0;right:40px;bottom:0;display:flex;z-index:100;background:#fff;";
+    ensureContextPaneOpen(win);
+    placePanel();
+    applyVisibleStyle();
     textarea.focus();
-    if (sidenavBtn) sidenavBtn.style.background = "rgba(0,0,0,0.08)";
+    setButtonsActive(true);
   }
 
   function hideChat(): void {
     panelVisible = false;
     (container as HTMLElement).style.cssText = "display:none;";
-    if (sidenavBtn) sidenavBtn.style.background = "";
+    setButtonsActive(false);
   }
 
   function togglePanel(): void {
     if (panelVisible) hideChat(); else showChat();
   }
 
-  function watchOtherButtons(): void {
-    const sidenav = doc.querySelector("item-pane-sidenav") as HTMLElement;
-    if (!sidenav) return;
-    // Only hide chat when user clicks another SIDENAV SECTION button
+  function watchOtherButtons(sidenav: HTMLElement): void {
+    if (sidenav.getAttribute(WATCHED_ATTR) === "true") return;
+    sidenav.setAttribute(WATCHED_ATTR, "true");
+    // Only hide chat when the user clicks another SIDENAV SECTION button
     // (not when clicking items in the library list)
     sidenav.addEventListener("click", (e: Event) => {
       const target = e.target as HTMLElement;
       const btn = target.closest(".btn") as HTMLElement | null;
-      // Only react to sidenav buttons that are NOT ours and NOT the toggle button
-      if (btn && btn.id !== "clautero-sidenav-btn"
+      // Only react to sidenav buttons that are NOT ours
+      if (btn && !btn.classList.contains(BTN_CLASS)
         && !btn.hasAttribute("data-action") && panelVisible) {
         hideChat();
       }
@@ -331,13 +375,13 @@ export function initSidebarManager(
     getElements: () => registeredElements,
   });
 
-  Zotero.log("[Clautero] Sidebar initialized (Claudian-style)", "info");
+  Zotero.log("[Clautero] Sidebar initialized (Claudian-style, library + reader panes)", "info");
 
   return () => {
     for (const fn of cleanups) fn();
     hideChat();
     container.remove();
-    if (sidenavBtn) sidenavBtn.remove();
+    for (const btn of allSidenavButtons()) btn.remove();
     registeredElements = null;
     delete (win as any).__clauteroSidebar;
   };

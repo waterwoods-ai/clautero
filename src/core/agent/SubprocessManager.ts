@@ -11,6 +11,10 @@ const PID_FILENAME = "clautero-claude.pid";
 export interface SubprocessManagerOptions {
   readonly command: string;
   readonly args: readonly string[];
+  /** Provider-specific JSONL event mapper. */
+  readonly parseEvent: (raw: Record<string, unknown>) => StreamChunk[];
+  /** Extra environment merged into the child's inherited env (e.g. PATH). */
+  readonly environment?: Record<string, string>;
   readonly workdir: string;
   readonly dataDir: string;
   readonly onChunk: (chunk: StreamChunk) => void;
@@ -98,8 +102,13 @@ export async function cleanupOrphanedProcess(
 export function createSubprocessManager(options: SubprocessManagerOptions) {
   let process: SubprocessInstance | null = null;
   let running = false;
+  // Set only by kill(): distinguishes an intentional stop (drop buffered
+  // output) from a natural exit (drain and parse everything first).
+  let killed = false;
+  let stdoutDone: Promise<void> = Promise.resolve();
 
   const parser = createNDJSONParser({
+    parseEvent: options.parseEvent,
     onMessage: options.onChunk,
     onParseError: (line, error) => {
       Zotero.log(
@@ -111,16 +120,20 @@ export function createSubprocessManager(options: SubprocessManagerOptions) {
 
   async function readStdoutLoop(proc: SubprocessInstance): Promise<void> {
     try {
-      while (running) {
+      // Loop until EOF, not until process exit — the exit notification can
+      // race ahead of the last buffered read, which must still be parsed.
+      while (!killed) {
         const data = await proc.stdout.readString();
-        if (data.length === 0) {
+        // Re-check after the await: kill() may have landed while the read
+        // was in flight, and a stale chunk must not reach the parser.
+        if (killed || data.length === 0) {
           break;
         }
         parser.feed(data);
       }
-      parser.flush();
+      if (!killed) parser.flush();
     } catch (error) {
-      if (running) {
+      if (running && !killed) {
         options.onError(
           error instanceof Error
             ? error
@@ -136,9 +149,9 @@ export function createSubprocessManager(options: SubprocessManagerOptions) {
     }
 
     try {
-      while (running) {
+      while (!killed) {
         const data = await proc.stderr.readString();
-        if (data.length === 0) {
+        if (killed || data.length === 0) {
           break;
         }
         Zotero.log(`[Clautero] stderr: ${data.trim()}`, "warning");
@@ -162,6 +175,9 @@ export function createSubprocessManager(options: SubprocessManagerOptions) {
       arguments: [...options.args],
       workdir: options.workdir,
       stderr: "pipe",
+      ...(options.environment
+        ? { environment: options.environment, environmentAppend: true }
+        : {}),
     });
 
     process = proc;
@@ -171,11 +187,14 @@ export function createSubprocessManager(options: SubprocessManagerOptions) {
     // Gecko Subprocess does not expose PID directly, so we write a marker
     await writePidFile(options.dataDir, Date.now());
 
-    // Start async read loops (non-blocking)
-    readStdoutLoop(proc).catch((error) => {
-      options.onError(
-        error instanceof Error ? error : new Error(String(error))
-      );
+    // Start async read loops (non-blocking); the exit handler awaits the
+    // stdout drain so onExit always fires AFTER every chunk was parsed.
+    stdoutDone = readStdoutLoop(proc).catch((error) => {
+      if (!killed) {
+        options.onError(
+          error instanceof Error ? error : new Error(String(error))
+        );
+      }
     });
 
     readStderrLoop(proc).catch(() => {
@@ -187,6 +206,7 @@ export function createSubprocessManager(options: SubprocessManagerOptions) {
       .wait()
       .then(async (result: { exitCode: number }) => {
         running = false;
+        await stdoutDone;
         await removePidFile(options.dataDir);
         options.onExit(result.exitCode);
       })
@@ -207,11 +227,19 @@ export function createSubprocessManager(options: SubprocessManagerOptions) {
     await process.stdin.write(ndjson);
   }
 
+  /** Close stdin — per-turn CLIs read the prompt to EOF before answering. */
+  async function closeStdin(): Promise<void> {
+    try {
+      await process?.stdin.close();
+    } catch { /* already closed or process gone */ }
+  }
+
   async function kill(): Promise<void> {
     if (!process) {
       return;
     }
 
+    killed = true;
     running = false;
 
     try {
@@ -229,5 +257,5 @@ export function createSubprocessManager(options: SubprocessManagerOptions) {
     return running;
   }
 
-  return { start, sendMessage, kill, isRunning };
+  return { start, sendMessage, closeStdin, kill, isRunning };
 }

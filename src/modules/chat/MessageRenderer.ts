@@ -9,6 +9,7 @@
 // DOMPurify import — esbuild bundles this, but the default export may
 // not resolve correctly in Gecko's IIFE. We import it and try both shapes.
 import DOMPurifyModule from "dompurify";
+import { transformMarkdownSegments } from "./MarkdownSegments";
 
 const purify: { sanitize: (html: string, opts?: any) => string } | null = (() => {
   try {
@@ -43,18 +44,17 @@ function appendTextNode(parent: HTMLElement, text: string): void {
   parent.appendChild(parent.ownerDocument.createTextNode(text));
 }
 
-/**
- * Simple markdown-to-HTML converter for Claude responses.
- * Handles: **bold**, *italic*, `code`, ```code blocks```, headers, lists, links.
- */
-function markdownToHtml(md: string): string {
-  let html = md
-    // Code blocks (```...```)
-    .replace(/```(\w*)\n([\s\S]*?)```/g,
-      '<pre style="background:#f5f5f5;border-radius:6px;padding:8px 10px;overflow-x:auto;font-size:12px;margin:6px 0;"><code>$2</code></pre>')
-    // Inline code
-    .replace(/`([^`]+)`/g,
-      '<code style="background:#f0f0f0;border-radius:3px;padding:1px 4px;font-size:12px;">$1</code>')
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Markdown transforms for prose only — code segments never pass through here. */
+function proseToHtml(text: string): string {
+  return text
     // Headers
     .replace(/^### (.+)$/gm, '<strong style="font-size:14px;display:block;margin:8px 0 4px;">$1</strong>')
     .replace(/^## (.+)$/gm, '<strong style="font-size:15px;display:block;margin:10px 0 4px;">$1</strong>')
@@ -73,8 +73,22 @@ function markdownToHtml(md: string): string {
     .replace(/\n\n/g, '<br/><br/>')
     // Single newlines
     .replace(/\n/g, '<br/>');
+}
 
-  return html;
+/**
+ * Markdown-to-HTML via code-aware segmentation: prose transforms run only on
+ * text segments, and code content is HTML-escaped so it renders literally.
+ */
+function markdownToHtml(md: string): string {
+  return transformMarkdownSegments(md, {
+    text: proseToHtml,
+    inlineCode: (code) =>
+      '<code style="background:#f0f0f0;border-radius:3px;padding:1px 4px;font-size:12px;box-decoration-break:clone;">'
+      + escapeHtml(code) + '</code>',
+    fence: (code) =>
+      '<pre style="background:#f5f5f5;border-radius:6px;padding:8px 10px;overflow-x:auto;font-size:12px;margin:6px 0;"><code>'
+      + escapeHtml(code) + '</code></pre>',
+  });
 }
 
 function sanitizeAndAppendHtml(
@@ -334,6 +348,10 @@ export function createMessageRenderer(messageArea: HTMLElement) {
       appendTextNode(dot, "\u2022");
       indicator.appendChild(dot);
     }
+    const hint = createEl(doc, "span", "clautero-esc-hint");
+    hint.style.cssText = "font-size:11px;color:#bbb;margin-left:8px;";
+    appendTextNode(hint, "esc to interrupt");
+    indicator.appendChild(hint);
     loadingIndicator = indicator;
     messageArea.appendChild(indicator);
     autoScroll();
@@ -344,6 +362,25 @@ export function createMessageRenderer(messageArea: HTMLElement) {
       loadingIndicator.remove();
       loadingIndicator = null;
     }
+  }
+
+  function renderTurnFooter(text: string): void {
+    if (!currentAssistantBubble) return;
+    const footer = createEl(doc, "div", "clautero-turn-footer");
+    footer.style.cssText = "font-size:11px;color:#aaa;font-style:italic;margin-top:4px;";
+    appendTextNode(footer, text);
+    currentAssistantBubble.appendChild(footer);
+    autoScroll();
+  }
+
+  function renderInterruptedMarker(): void {
+    const marker = createEl(doc, "div", "clautero-interrupted");
+    marker.style.cssText =
+      "font-size:12px;color:#e67e22;border-left:2px solid #e67e22;" +
+      "padding:2px 8px;margin:6px 0;";
+    appendTextNode(marker, "Interrupted · send a new message to continue");
+    messageArea.appendChild(marker);
+    autoScroll();
   }
 
   function finishAssistantMessage(): void {
@@ -374,6 +411,8 @@ export function createMessageRenderer(messageArea: HTMLElement) {
     renderThinkingEnd,
     renderToolUseStart,
     renderToolResult,
+    renderTurnFooter,
+    renderInterruptedMarker,
     showLoading,
     removeLoading,
     finishAssistantMessage,

@@ -36,6 +36,7 @@ declare interface SubprocessOptions {
   command: string;
   arguments?: string[];
   environment?: Record<string, string>;
+  environmentAppend?: boolean;
   workdir?: string;
   stderr?: "pipe" | "stdout";
   discardStderr?: boolean;
