@@ -152,6 +152,27 @@ function sanitizeAndAppendHtml(
   appendTextNode(parent, html);
 }
 
+const SELECTION_STYLE_ID = "clautero-selection-style";
+
+/**
+ * Gecko's XUL UA stylesheet sets `:root { user-select: none }` on the whole
+ * Zotero window, so transcripts must opt back in. A stylesheet rule keyed to
+ * a class is used (not inline styles) because session containers have their
+ * style.cssText reassigned on every tab switch, which wipes inline props.
+ */
+function ensureSelectionStylesheet(doc: Document): void {
+  if (doc.getElementById(SELECTION_STYLE_ID)) return;
+  const style = doc.createElementNS(XHTML_NS, "style") as HTMLElement;
+  style.id = SELECTION_STYLE_ID;
+  style.textContent =
+    ".clautero-selectable, .clautero-selectable * {" +
+    " -moz-user-select: text !important; user-select: text !important; }" +
+    " .clautero-selectable .clautero-copy-btn," +
+    " .clautero-selectable .clautero-copy-btn * {" +
+    " -moz-user-select: none !important; user-select: none !important; }";
+  doc.documentElement.appendChild(style);
+}
+
 function copyToClipboard(doc: Document, text: string): boolean {
   try {
     const utils = (Zotero as unknown as {
@@ -185,9 +206,10 @@ export function createMessageRenderer(messageArea: HTMLElement) {
   const doc = messageArea.ownerDocument;
 
   // Zotero's XUL chrome disables text selection by default; opt the
-  // transcript back in so replies can be selected and copied.
-  messageArea.style.setProperty("-moz-user-select", "text");
-  messageArea.style.setProperty("user-select", "text");
+  // transcript back in so replies can be selected and copied. This must
+  // be class + stylesheet based — see ensureSelectionStylesheet.
+  ensureSelectionStylesheet(doc);
+  messageArea.classList.add("clautero-selectable");
   let currentAssistantBubble: HTMLElement | null = null;
   let currentTextContainer: HTMLElement | null = null;
   let loadingIndicator: HTMLElement | null = null;

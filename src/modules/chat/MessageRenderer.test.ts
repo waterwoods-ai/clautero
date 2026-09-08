@@ -21,11 +21,20 @@ describe("MessageRenderer copy & selection", () => {
     vi.useRealTimers();
   });
 
-  it("opts the transcript back into text selection", () => {
+  it("opts the transcript into selection via class + stylesheet", () => {
     const area = makeArea();
     createMessageRenderer(area);
-    // jsdom drops the -moz- prefixed twin; Gecko accepts both.
-    expect(area.style.getPropertyValue("user-select")).toBe("text");
+    // Inline styles get wiped by cssText reassignment on tab switch, so
+    // the opt-in must be a class backed by an injected stylesheet rule.
+    expect(area.classList.contains("clautero-selectable")).toBe(true);
+    const style = document.getElementById("clautero-selection-style");
+    expect(style).not.toBeNull();
+    expect(style?.textContent).toContain("user-select: text !important");
+    // A second renderer must not inject a duplicate stylesheet
+    const area2 = document.createElement("div");
+    document.body.appendChild(area2);
+    createMessageRenderer(area2);
+    expect(document.querySelectorAll("#clautero-selection-style")).toHaveLength(1);
   });
 
   it("attaches a copy button carrying the full reply text", () => {
