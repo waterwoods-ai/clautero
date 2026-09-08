@@ -152,6 +152,26 @@ function sanitizeAndAppendHtml(
   appendTextNode(parent, html);
 }
 
+function copyToClipboard(doc: Document, text: string): boolean {
+  try {
+    const utils = (Zotero as unknown as {
+      Utilities?: { Internal?: { copyTextToClipboard?: (t: string) => void } };
+    }).Utilities;
+    if (utils?.Internal?.copyTextToClipboard) {
+      utils.Internal.copyTextToClipboard(text);
+      return true;
+    }
+  } catch { /* fall through */ }
+  try {
+    const nav = doc.defaultView?.navigator;
+    if (nav?.clipboard?.writeText) {
+      void nav.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
 function isScrolledToBottom(el: HTMLElement): boolean {
   const threshold = 30;
   return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
@@ -163,6 +183,11 @@ function scrollToBottom(el: HTMLElement): void {
 
 export function createMessageRenderer(messageArea: HTMLElement) {
   const doc = messageArea.ownerDocument;
+
+  // Zotero's XUL chrome disables text selection by default; opt the
+  // transcript back in so replies can be selected and copied.
+  messageArea.style.setProperty("-moz-user-select", "text");
+  messageArea.style.setProperty("user-select", "text");
   let currentAssistantBubble: HTMLElement | null = null;
   let currentTextContainer: HTMLElement | null = null;
   let loadingIndicator: HTMLElement | null = null;
@@ -201,6 +226,7 @@ export function createMessageRenderer(messageArea: HTMLElement) {
   function ensureAssistantBubble(): HTMLElement {
     if (!currentAssistantBubble) {
       rawTextBuffer = ""; // Reset buffer for new assistant message
+      bubbleCopyText = "";
       const bubble = createEl(
         doc, "div", "clautero-msg clautero-msg-assistant"
       );
@@ -227,10 +253,14 @@ export function createMessageRenderer(messageArea: HTMLElement) {
 
   // Accumulate raw text so markdown renders correctly across chunk boundaries
   let rawTextBuffer = "";
+  // Full plain text of the current assistant message (across thinking/tool
+  // interleavings) — what the copy button puts on the clipboard.
+  let bubbleCopyText = "";
 
   function appendTextChunk(content: string): void {
     const container = ensureTextContainer();
     rawTextBuffer += content;
+    bubbleCopyText += content;
 
     // Re-render the full accumulated text as markdown
     // This ensures **bold** spanning across chunks renders correctly
@@ -364,6 +394,33 @@ export function createMessageRenderer(messageArea: HTMLElement) {
     }
   }
 
+  function attachCopyButton(): void {
+    const bubble = currentAssistantBubble;
+    if (!bubble || !bubbleCopyText.trim()) return;
+    if (bubble.querySelector(".clautero-copy-btn")) return;
+
+    const text = bubbleCopyText;
+    const btn = createEl(doc, "button", "clautero-copy-btn");
+    btn.style.cssText =
+      "border:none;background:transparent;color:#aaa;font-size:11px;" +
+      "cursor:pointer;padding:2px 0;margin-top:4px;display:block;" +
+      "-moz-user-select:none;user-select:none;";
+    btn.setAttribute("title", "Copy message");
+    appendTextNode(btn, "⧉ Copy");
+    btn.addEventListener("mouseenter", () => { btn.style.color = "#666"; });
+    btn.addEventListener("mouseleave", () => { btn.style.color = "#aaa"; });
+    btn.addEventListener("click", () => {
+      const ok = copyToClipboard(doc, text);
+      while (btn.firstChild) btn.removeChild(btn.firstChild);
+      appendTextNode(btn, ok ? "✓ Copied" : "✗ Copy failed");
+      (doc.defaultView as Window).setTimeout(() => {
+        while (btn.firstChild) btn.removeChild(btn.firstChild);
+        appendTextNode(btn, "⧉ Copy");
+      }, 1500);
+    });
+    bubble.appendChild(btn);
+  }
+
   function renderTurnFooter(text: string): void {
     if (!currentAssistantBubble) return;
     const footer = createEl(doc, "div", "clautero-turn-footer");
@@ -385,6 +442,7 @@ export function createMessageRenderer(messageArea: HTMLElement) {
 
   function finishAssistantMessage(): void {
     removeLoading();
+    attachCopyButton();
     currentAssistantBubble = null;
     currentTextContainer = null;
   }
