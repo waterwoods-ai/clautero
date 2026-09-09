@@ -3,7 +3,7 @@ import { initSidebarManager } from "./modules/sidebar/SidebarManager";
 import type { SidebarElements } from "./modules/sidebar/SidebarManager";
 import { createInputController } from "./modules/chat/InputController";
 import { createChatState, addMessage, type ChatStateData } from "./modules/chat/ChatState";
-import { createMessageRenderer } from "./modules/chat/MessageRenderer";
+import { createMessageRenderer, copyTextToClipboard } from "./modules/chat/MessageRenderer";
 import { createStreamController } from "./modules/chat/StreamController";
 import { createClauteroService } from "./core/agent/ClauteroService";
 import {
@@ -641,6 +641,37 @@ function doInitChat(
   };
   doc.addEventListener("keydown", escHandler, true);
   cleanupList.push(() => doc.removeEventListener("keydown", escHandler, true));
+
+  // ── Cmd/Ctrl+C copies the transcript selection ──
+  // Zotero's XUL command dispatcher routes the copy command to whatever
+  // controller owns focus (items tree, composer) — a document selection in
+  // our non-focusable transcript never reaches the clipboard on its own.
+  const copyHandler = (e: Event) => {
+    const ke = e as KeyboardEvent;
+    const isMac = (typeof Zotero !== "undefined" && Zotero.isMac) || false;
+    const mod = isMac ? ke.metaKey : ke.ctrlKey;
+    if (!mod || ke.key.toLowerCase() !== "c" || ke.shiftKey || ke.altKey) return;
+
+    // Editable controls handle their own copy
+    const focused = doc.activeElement?.localName?.toLowerCase() ?? "";
+    if (focused === "textarea" || focused === "input") return;
+
+    const selection = win.getSelection?.();
+    if (!selection || selection.isCollapsed) return;
+    const anchor = selection.anchorNode;
+    const anchorEl = anchor?.nodeType === 1
+      ? (anchor as HTMLElement)
+      : anchor?.parentElement ?? null;
+    if (!anchorEl?.closest?.(".clautero-selectable")) return;
+
+    const text = selection.toString();
+    if (!text) return;
+    ke.preventDefault();
+    ke.stopPropagation();
+    copyTextToClipboard(doc, text);
+  };
+  doc.addEventListener("keydown", copyHandler, true);
+  cleanupList.push(() => doc.removeEventListener("keydown", copyHandler, true));
 
   // ── Context ──
   let currentContext = "";

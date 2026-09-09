@@ -10,6 +10,7 @@
 // not resolve correctly in Gecko's IIFE. We import it and try both shapes.
 import DOMPurifyModule from "dompurify";
 import { transformMarkdownSegments } from "./MarkdownSegments";
+import temml from "temml";
 
 const purify: { sanitize: (html: string, opts?: any) => string } | null = (() => {
   try {
@@ -76,12 +77,32 @@ function proseToHtml(text: string): string {
 }
 
 /**
+ * LaTeX → MathML via Temml; Gecko renders MathML natively (no font payload).
+ * The MathML namespace is stamped on so the XHTML parse path keeps the
+ * subtree in the MathML namespace; the html parser ignores it harmlessly.
+ */
+function mathToHtml(tex: string, raw: string, display: boolean): string {
+  try {
+    const mathml = temml.renderToString(tex, { displayMode: display, throwOnError: false });
+    const namespaced = mathml.replace("<math", '<math xmlns="http://www.w3.org/1998/Math/MathML"');
+    return display
+      ? '<div style="margin:8px 0;overflow-x:auto;">' + namespaced + "</div>"
+      : namespaced;
+  } catch {
+    return '<code style="background:#f0f0f0;border-radius:3px;padding:1px 4px;font-size:12px;">'
+      + escapeHtml(raw) + "</code>";
+  }
+}
+
+/**
  * Markdown-to-HTML via code-aware segmentation: prose transforms run only on
  * text segments, and code content is HTML-escaped so it renders literally.
  */
 function markdownToHtml(md: string): string {
   return transformMarkdownSegments(md, {
     text: proseToHtml,
+    inlineMath: (tex, raw) => mathToHtml(tex, raw, false),
+    displayMath: (tex, raw) => mathToHtml(tex, raw, true),
     inlineCode: (code) =>
       '<code style="background:#f0f0f0;border-radius:3px;padding:1px 4px;font-size:12px;box-decoration-break:clone;">'
       + escapeHtml(code) + '</code>',
@@ -173,7 +194,7 @@ function ensureSelectionStylesheet(doc: Document): void {
   doc.documentElement.appendChild(style);
 }
 
-function copyToClipboard(doc: Document, text: string): boolean {
+export function copyTextToClipboard(doc: Document, text: string): boolean {
   try {
     const utils = (Zotero as unknown as {
       Utilities?: { Internal?: { copyTextToClipboard?: (t: string) => void } };
@@ -432,7 +453,7 @@ export function createMessageRenderer(messageArea: HTMLElement) {
     btn.addEventListener("mouseenter", () => { btn.style.color = "#666"; });
     btn.addEventListener("mouseleave", () => { btn.style.color = "#aaa"; });
     btn.addEventListener("click", () => {
-      const ok = copyToClipboard(doc, text);
+      const ok = copyTextToClipboard(doc, text);
       while (btn.firstChild) btn.removeChild(btn.firstChild);
       appendTextNode(btn, ok ? "✓ Copied" : "✗ Copy failed");
       (doc.defaultView as Window).setTimeout(() => {

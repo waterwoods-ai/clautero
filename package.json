@@ -26,6 +26,7 @@
     "zotero-types": "^4.1.2"
   },
   "dependencies": {
-    "dompurify": "^3.2.0"
+    "dompurify": "^3.2.0",
+    "temml": "^0.13.5"
   }
 }

@@ -62,3 +62,49 @@ describe("transformMarkdownSegments", () => {
     expect(transformMarkdownSegments(md, identity)).toBe(md + "");
   });
 });
+
+describe("math segments", () => {
+  it("extracts inline and display math with TeX content and raw source", () => {
+    const segs = segmentMarkdown("energy $E = mc^2$ and $$\\int_0^1 x\\,dx$$ done");
+    const inline = segs.find((s) => s.kind === "inline-math");
+    const display = segs.find((s) => s.kind === "display-math");
+    expect(inline).toMatchObject({ content: "E = mc^2", raw: "$E = mc^2$" });
+    expect(display).toMatchObject({ content: "\\int_0^1 x\\,dx" });
+  });
+
+  it("supports \\( \\) and \\[ \\] delimiters", () => {
+    const segs = segmentMarkdown("a \\(x+1\\) b \\[y^2\\] c");
+    expect(segs.find((s) => s.kind === "inline-math")?.content).toBe("x+1");
+    expect(segs.find((s) => s.kind === "display-math")?.content).toBe("y^2");
+  });
+
+  it("leaves currency-style dollars as text", () => {
+    const segs = segmentMarkdown("costs $5 and $10 total");
+    expect(segs.every((s) => s.kind === "text")).toBe(true);
+  });
+
+  it("never treats math inside code as math", () => {
+    const segs = segmentMarkdown("`price = $x$` and\n```\n$y^2$\n```");
+    expect(segs.some((s) => s.kind === "inline-math" || s.kind === "display-math")).toBe(false);
+    expect(segs.find((s) => s.kind === "inline-code")?.content).toBe("price = $x$");
+    expect(segs.find((s) => s.kind === "fence")?.content).toBe("$y^2$");
+  });
+
+  it("passes math through verbatim when no math transform is given", () => {
+    const md = "see $a_1$ here";
+    expect(transformMarkdownSegments(md, identity)).toBe(md);
+  });
+
+  it("routes math to the math transforms, protected from prose regexes", () => {
+    const out = transformMarkdownSegments("bold **yes** $a*b*c$", {
+      text: (s) => s.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>"),
+      inlineCode: (s) => s,
+      fence: (s) => s,
+      inlineMath: (tex) => `[M:${tex}]`,
+      displayMath: (tex) => `[D:${tex}]`,
+    });
+    expect(out).toContain("<b>yes</b>");
+    expect(out).toContain("[M:a*b*c]");
+    expect(out).not.toContain("<em>");
+  });
+});

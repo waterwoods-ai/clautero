@@ -99,3 +99,37 @@ describe("MessageRenderer copy & selection", () => {
     expect(copySpy).toHaveBeenCalledWith("b");
   });
 });
+
+describe("MessageRenderer math", () => {
+  beforeEach(() => {
+    (globalThis as any).Zotero = { log: () => {}, Utilities: { Internal: { copyTextToClipboard: vi.fn() } } };
+  });
+  afterEach(() => { delete (globalThis as any).Zotero; });
+
+  it("renders inline TeX as namespaced MathML", () => {
+    const area = makeArea();
+    const renderer = createMessageRenderer(area);
+    renderer.appendTextChunk("Einstein: $E = mc^2$");
+    renderer.finishAssistantMessage();
+    const math = area.querySelector("math");
+    expect(math).not.toBeNull();
+    expect(area.textContent).not.toContain("$E");
+  });
+
+  it("renders display math in a scrollable block", () => {
+    const area = makeArea();
+    const renderer = createMessageRenderer(area);
+    renderer.appendTextChunk("$$\\frac{a}{b}$$");
+    renderer.finishAssistantMessage();
+    expect(area.querySelector("math[display='block']")).not.toBeNull();
+  });
+
+  it("keeps dollar amounts as plain text", () => {
+    const area = makeArea();
+    const renderer = createMessageRenderer(area);
+    renderer.appendTextChunk("that costs $5 and $10 today");
+    renderer.finishAssistantMessage();
+    expect(area.querySelector("math")).toBeNull();
+    expect(area.textContent).toContain("$5 and $10");
+  });
+});

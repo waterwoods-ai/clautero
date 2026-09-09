@@ -8,38 +8,83 @@
  * Clautero's renderer needs (backtick + tilde fences, inline code runs).
  */
 
-export type SegmentKind = "text" | "inline-code" | "fence";
+export type SegmentKind = "text" | "inline-code" | "fence" | "inline-math" | "display-math";
 
 export interface Segment {
   readonly kind: SegmentKind;
-  /** Segment content. For fences: inner lines only, no fence markers. */
+  /** Segment content. For fences: inner lines only. For math: the TeX. */
   readonly content: string;
   /** Fence info string's first word (e.g. "ts"), when present. */
   readonly lang?: string;
+  /** Original source including delimiters (math segments). */
+  readonly raw?: string;
 }
 
 export interface SegmentTransforms {
   readonly text: (content: string) => string;
   readonly inlineCode: (code: string) => string;
   readonly fence: (code: string, lang?: string) => string;
+  /** LaTeX transforms; when omitted, math passes through verbatim. */
+  readonly inlineMath?: (tex: string, raw: string) => string;
+  readonly displayMath?: (tex: string, raw: string) => string;
 }
 
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\s`]*)[^`]*$/;
 
+function splitMath(text: string, out: Segment[]): void {
+  // Display math first ($…$ / \[…\]), then inline ($…$ / \(…\)) in the rest.
+  const displayRe = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = displayRe.exec(text)) !== null) {
+    if (match.index > last) {
+      splitInlineMath(text.slice(last, match.index), out);
+    }
+    out.push({ kind: "display-math", content: (match[1] ?? match[2]).trim(), raw: match[0] });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) {
+    splitInlineMath(text.slice(last), out);
+  }
+}
+
+function splitInlineMath(text: string, out: Segment[]): void {
+  const inlineRe = /\\\(([\s\S]+?)\\\)|\$([^$\n]+?)\$/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = inlineRe.exec(text)) !== null) {
+    const tex = match[1] ?? match[2];
+    // Reject currency-style dollars: "$5 and $10" ("5 and " ends with space).
+    const isDollarForm = match[1] === undefined;
+    if (isDollarForm && (/^\s/.test(tex) || /\s$/.test(tex))) {
+      continue; // leave for the surrounding text segment
+    }
+    if (match.index > last) {
+      out.push({ kind: "text", content: text.slice(last, match.index) });
+    }
+    out.push({ kind: "inline-math", content: tex.trim(), raw: match[0] });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) {
+    out.push({ kind: "text", content: text.slice(last) });
+  }
+}
+
 function splitInline(text: string, out: Segment[]): void {
-  // Inline code: a run of N backticks closed by the same run length.
+  // Inline code first: a run of N backticks closed by the same run length.
+  // Math inside code spans stays code; math is split from the remaining text.
   const re = /(`+)([\s\S]+?)\1/g;
   let last = 0;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text)) !== null) {
     if (match.index > last) {
-      out.push({ kind: "text", content: text.slice(last, match.index) });
+      splitMath(text.slice(last, match.index), out);
     }
     out.push({ kind: "inline-code", content: match[2] });
     last = match.index + match[0].length;
   }
   if (last < text.length) {
-    out.push({ kind: "text", content: text.slice(last) });
+    splitMath(text.slice(last), out);
   }
 }
 
@@ -114,6 +159,16 @@ export function transformMarkdownSegments(
     .map((seg) => {
       if (seg.kind === "inline-code") return transforms.inlineCode(seg.content);
       if (seg.kind === "fence") return transforms.fence(seg.content, seg.lang);
+      if (seg.kind === "inline-math") {
+        return transforms.inlineMath
+          ? transforms.inlineMath(seg.content, seg.raw ?? seg.content)
+          : (seg.raw ?? seg.content);
+      }
+      if (seg.kind === "display-math") {
+        return transforms.displayMath
+          ? transforms.displayMath(seg.content, seg.raw ?? seg.content)
+          : (seg.raw ?? seg.content);
+      }
       return transforms.text(seg.content);
     })
     .join("");
