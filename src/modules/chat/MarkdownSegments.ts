@@ -8,7 +8,7 @@
  * Clautero's renderer needs (backtick + tilde fences, inline code runs).
  */
 
-export type SegmentKind = "text" | "inline-code" | "fence" | "inline-math" | "display-math";
+export type SegmentKind = "text" | "inline-code" | "fence" | "inline-math" | "display-math" | "table";
 
 export interface Segment {
   readonly kind: SegmentKind;
@@ -27,7 +27,12 @@ export interface SegmentTransforms {
   /** LaTeX transforms; when omitted, math passes through verbatim. */
   readonly inlineMath?: (tex: string, raw: string) => string;
   readonly displayMath?: (tex: string, raw: string) => string;
+  /** GFM table transform; when omitted, tables pass through verbatim. */
+  readonly table?: (content: string) => string;
 }
+
+const PIPE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_SEPARATOR = /^\s*\|(\s*:?-+:?\s*\|)+\s*$/;
 
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\s`]*)[^`]*$/;
 
@@ -104,7 +109,8 @@ export function segmentMarkdown(markdown: string): readonly Segment[] {
     textBuffer = [];
   }
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (fenceBuffer !== null) {
       const closes = new RegExp(`^ {0,3}${fenceMarker[0]}{${fenceMarker.length},}[ \t]*$`).test(line);
       if (closes) {
@@ -121,6 +127,22 @@ export function segmentMarkdown(markdown: string): readonly Segment[] {
       } else {
         fenceBuffer.push(line);
       }
+      continue;
+    }
+
+    // GFM table: a pipe row whose next line is the separator row
+    if (PIPE_ROW.test(line) && i + 1 < lines.length && TABLE_SEPARATOR.test(lines[i + 1])) {
+      flushText(true);
+      const tableLines = [line, lines[i + 1]];
+      let j = i + 2;
+      while (j < lines.length && PIPE_ROW.test(lines[j])) {
+        tableLines.push(lines[j]);
+        j++;
+      }
+      segments.push(Object.freeze({ kind: "table" as const, content: tableLines.join("\n") }));
+      // Restore the separator newline, as after a fence close
+      textBuffer.push("");
+      i = j - 1;
       continue;
     }
 
@@ -168,6 +190,9 @@ export function transformMarkdownSegments(
         return transforms.displayMath
           ? transforms.displayMath(seg.content, seg.raw ?? seg.content)
           : (seg.raw ?? seg.content);
+      }
+      if (seg.kind === "table") {
+        return transforms.table ? transforms.table(seg.content) : seg.content;
       }
       return transforms.text(seg.content);
     })

@@ -94,6 +94,66 @@ function mathToHtml(tex: string, raw: string, display: boolean): string {
   }
 }
 
+function inlineCodeToHtml(code: string): string {
+  return '<code style="background:#f0f0f0;border-radius:3px;padding:1px 4px;font-size:12px;box-decoration-break:clone;">'
+    + escapeHtml(code) + '</code>';
+}
+
+function fenceToHtml(code: string): string {
+  return '<pre style="background:#f5f5f5;border-radius:6px;padding:8px 10px;overflow-x:auto;font-size:12px;margin:6px 0;"><code>'
+    + escapeHtml(code) + '</code></pre>';
+}
+
+/** Cell content gets the inline transforms (bold, code, math) but no blocks. */
+function cellToHtml(text: string): string {
+  return transformMarkdownSegments(text, {
+    text: proseToHtml,
+    inlineCode: inlineCodeToHtml,
+    fence: fenceToHtml,
+    inlineMath: (tex, raw) => mathToHtml(tex, raw, false),
+    displayMath: (tex, raw) => mathToHtml(tex, raw, true),
+  });
+}
+
+function splitTableRow(line: string): string[] {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+}
+
+const CELL_STYLE = "border:1px solid #e0e0e0;padding:4px 8px;vertical-align:top;";
+
+function tableToHtml(content: string): string {
+  const lines = content.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return proseToHtml(content);
+
+  const headers = splitTableRow(lines[0]);
+  const aligns = splitTableRow(lines[1]).map((sep) => {
+    const left = sep.startsWith(":");
+    const right = sep.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    return "left";
+  });
+  const alignFor = (i: number) => aligns[i] ?? "left";
+
+  let html = '<div style="overflow-x:auto;margin:8px 0;">'
+    + '<table style="border-collapse:collapse;font-size:12px;line-height:1.4;">';
+  html += "<thead><tr>";
+  headers.forEach((h, i) => {
+    html += '<th style="' + CELL_STYLE + 'background:#f7f7f7;font-weight:600;text-align:' + alignFor(i) + ';">'
+      + cellToHtml(h) + "</th>";
+  });
+  html += "</tr></thead><tbody>";
+  for (const rowLine of lines.slice(2)) {
+    html += "<tr>";
+    splitTableRow(rowLine).forEach((cell, i) => {
+      html += '<td style="' + CELL_STYLE + 'text-align:' + alignFor(i) + ';">' + cellToHtml(cell) + "</td>";
+    });
+    html += "</tr>";
+  }
+  html += "</tbody></table></div>";
+  return html;
+}
+
 /**
  * Markdown-to-HTML via code-aware segmentation: prose transforms run only on
  * text segments, and code content is HTML-escaped so it renders literally.
@@ -103,12 +163,9 @@ function markdownToHtml(md: string): string {
     text: proseToHtml,
     inlineMath: (tex, raw) => mathToHtml(tex, raw, false),
     displayMath: (tex, raw) => mathToHtml(tex, raw, true),
-    inlineCode: (code) =>
-      '<code style="background:#f0f0f0;border-radius:3px;padding:1px 4px;font-size:12px;box-decoration-break:clone;">'
-      + escapeHtml(code) + '</code>',
-    fence: (code) =>
-      '<pre style="background:#f5f5f5;border-radius:6px;padding:8px 10px;overflow-x:auto;font-size:12px;margin:6px 0;"><code>'
-      + escapeHtml(code) + '</code></pre>',
+    inlineCode: inlineCodeToHtml,
+    fence: fenceToHtml,
+    table: tableToHtml,
   });
 }
 

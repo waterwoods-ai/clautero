@@ -133,3 +133,43 @@ describe("MessageRenderer math", () => {
     expect(area.textContent).toContain("$5 and $10");
   });
 });
+
+describe("MessageRenderer tables", () => {
+  beforeEach(() => {
+    (globalThis as any).Zotero = { log: () => {}, Utilities: { Internal: { copyTextToClipboard: vi.fn() } } };
+  });
+  afterEach(() => { delete (globalThis as any).Zotero; });
+
+  it("renders a GFM table with header and body cells", () => {
+    const area = makeArea();
+    const renderer = createMessageRenderer(area);
+    renderer.appendTextChunk("| 步骤 | A 方 | B 方 |\n|---|---|---|\n| 1 | 初始化 | 生成密钥对 |");
+    renderer.finishAssistantMessage();
+    const table = area.querySelector("table");
+    expect(table).not.toBeNull();
+    expect(table?.querySelectorAll("th")).toHaveLength(3);
+    expect(table?.querySelectorAll("td")).toHaveLength(3);
+    expect(area.textContent).not.toContain("|---|");
+  });
+
+  it("applies inline transforms inside cells (bold, code, math)", () => {
+    const area = makeArea();
+    const renderer = createMessageRenderer(area);
+    renderer.appendTextChunk("| k | v |\n|---|---|\n| **b** | `c` and $x^2$ |");
+    renderer.finishAssistantMessage();
+    const table = area.querySelector("table") as HTMLElement;
+    expect(table.querySelector("td strong")).not.toBeNull();
+    expect(table.querySelector("td code")).not.toBeNull();
+    expect(table.querySelector("td math")).not.toBeNull();
+  });
+
+  it("honors alignment separators", () => {
+    const area = makeArea();
+    const renderer = createMessageRenderer(area);
+    renderer.appendTextChunk("| a | b |\n|:---:|---:|\n| 1 | 2 |");
+    renderer.finishAssistantMessage();
+    const tds = area.querySelectorAll("td");
+    expect((tds[0] as HTMLElement).style.textAlign).toBe("center");
+    expect((tds[1] as HTMLElement).style.textAlign).toBe("right");
+  });
+});

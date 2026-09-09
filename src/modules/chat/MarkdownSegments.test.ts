@@ -108,3 +108,35 @@ describe("math segments", () => {
     expect(out).not.toContain("<em>");
   });
 });
+
+describe("table segments", () => {
+  const table = "| 步骤 | A 方 |\n|---|---|\n| 1 | 初始化 $\\Theta_A$ |";
+
+  it("detects a GFM table as one block segment", () => {
+    const segs = segmentMarkdown("before\n" + table + "\nafter");
+    const t = segs.find((s) => s.kind === "table");
+    expect(t?.content).toBe(table);
+    expect(segs.some((s) => s.kind === "inline-math")).toBe(false); // math stays inside the table block
+  });
+
+  it("requires a separator row — lone pipe lines stay text", () => {
+    const segs = segmentMarkdown("| a | b |\n| c | d |");
+    expect(segs.some((s) => s.kind === "table")).toBe(false);
+  });
+
+  it("never treats pipe rows inside fences as tables", () => {
+    const segs = segmentMarkdown("```\n| a | b |\n|---|---|\n```");
+    expect(segs).toHaveLength(1);
+    expect(segs[0].kind).toBe("fence");
+  });
+
+  it("round-trips a table verbatim without a table transform", () => {
+    const md = "x\n" + table + "\ny";
+    expect(transformMarkdownSegments(md, identity)).toBe(md);
+  });
+
+  it("supports alignment separators", () => {
+    const segs = segmentMarkdown("| a | b |\n|:---:|---:|\n| 1 | 2 |");
+    expect(segs.find((s) => s.kind === "table")).toBeTruthy();
+  });
+});
