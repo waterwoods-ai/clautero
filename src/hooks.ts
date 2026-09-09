@@ -1479,6 +1479,11 @@ export function createHooks(addon: Addon): Hooks {
         Zotero.log(`[Clautero] Directory setup warning: ${e}`, "warning");
         // Non-fatal — continue startup
       }
+      try {
+        await addon.ensureWorkspaceGuide();
+      } catch (e) {
+        Zotero.log(`[Clautero] Workspace guide warning: ${e}`, "warning");
+      }
       Zotero.log("[Clautero] Plugin started", "info");
     },
 

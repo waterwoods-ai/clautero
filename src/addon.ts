@@ -1,3 +1,18 @@
+const WORKSPACE_GUIDE = [
+  "# Clautero Workspace Guide",
+  "",
+  "<!-- Seeded by Clautero on first run. Edit freely - Clautero never overwrites this file. -->",
+  "",
+  "## Response formatting",
+  "",
+  "- When writing math, ALWAYS use LaTeX delimiters: `$...$` for inline math, `$$...$$` for display math.",
+  "- Never write formulas as plain Unicode or pseudo-notation (Θ_A, x_i, ∂L/∂θ) —",
+  "  write `$\\Theta_A$`, `$x_i$`, `$\\partial L/\\partial \\theta$` instead.",
+  "- Use GFM tables (pipe syntax with a `|---|` separator row) for tabular content.",
+  "- Put code in fenced code blocks with a language tag.",
+  "",
+].join("\n");
+
 export class Addon {
   readonly id = "clautero@zotero-plugin";
   readonly rootURI: string;
@@ -71,6 +86,24 @@ export class Addon {
       }
     } catch { /* ignore */ }
     return this.safePath(this.dataDir, "commands");
+  }
+
+  /**
+   * Seed formatting guidance into the workspace so every provider CLI
+   * (CLAUDE.md for Claude Code, AGENTS.md for Codex/OpenCode/Pi) produces
+   * renderable output. Existing files are never touched.
+   */
+  async ensureWorkspaceGuide(): Promise<void> {
+    for (const name of ["CLAUDE.md", "AGENTS.md"]) {
+      try {
+        const path = this.safePath(this.workspaceDir, name);
+        if (await IOUtils.exists(path)) continue;
+        await IOUtils.writeUTF8(path, WORKSPACE_GUIDE);
+        Zotero.log(`[Clautero] Seeded workspace guide: ${path}`, "info");
+      } catch (e) {
+        Zotero.log(`[Clautero] Could not seed workspace guide ${name}: ${e}`, "warning");
+      }
+    }
   }
 
   async ensureDirectories(): Promise<void> {
